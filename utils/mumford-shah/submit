@@ -1,0 +1,21 @@
+#!/bin/bash
+# parallel job using 48 processors. and runs for 4 hours (max)
+##SBATCH -N 1   # node count
+##SBATCH --ntasks-per-node=16
+#SBATCH --mem-per-cpu=8000
+#SBATCH --ntasks=1
+#SBATCH -t 05:00:00
+## sends mail when process begins, and
+## when it ends. Make sure you define your email
+## address.
+##SBATCH --mail-type=begin
+##SBATCH --mail-type=end
+##SBATCH --mail-user=hgharti@princeton.edu
+# load appropriate compiler
+
+source ~/.login16
+
+cd /tigress/hgharti/gitwork/specfem2d/utils/mumford-shah 
+# problems with mpiexec/mpirun so use srun
+#srun -n 1 ./bin/psemimage ./input/lenna6m.psem
+srun -n 1 ./bin/psemimage ./input/testspec.psem -ksp_type fgmres -pc_type asm -ksp_gmres_restart 300

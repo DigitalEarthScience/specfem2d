@@ -1,0 +1,888 @@
+! include 'license.txt'
+! this is a main routine for multistage excavation
+! REVISION:
+!   HNG, Aug 25,2011; HNG, Jul 14,2011; HNG, Jul 11,2011; Apr 09,2010
+subroutine semvisco3d(ismpi,myid,nproc,gnod,sum_file,ptail,format_str)
+! import necessary libraries
+use global
+use string_library, only : parse_file
+use math_constants
+use gll_library
+!use mesh_spec
+use shape_library
+use math_library
+use preprocess
+!use gauss_library
+use general_maxwell
+use general_maxwellNEW
+use plastic_library
+#if (USE_MPI)
+use mpi_library
+use ghost_library_mpi
+use math_library_mpi
+use solver_mpi
+#else
+use serial_library
+use math_library_serial
+use solver
+#endif
+use visual
+use postprocess
+
+implicit none
+logical,intent(in) :: ismpi
+integer,intent(in) :: myid,nproc
+integer,intent(in) :: gnod(8)
+character(len=250),intent(in) :: sum_file
+character(len=20),intent(in) :: ptail,format_str
+
+integer :: funit,i,ios,istat,j,k,neq
+integer :: i_elmt,i_nliter,i_node,i_inc,i_srf,i_tstep,i_excav,ielmt,igdof,imat,&
+inode,iedof
+real(kind=kreal),parameter :: r3=3.0_kreal,one_third=one/r3,two_third=two/r3
+real(kind=kreal),dimension(nst),parameter :: unit_voigt=(/one,one,one,zero,zero,zero /)
+real(kind=kreal) :: detjac,dq1,dq2,dq3,dsbar,dt,f,h1,h2,lode_theta,phifr, &
+sf,sigm,tnph,tnps
+
+real(kind=kreal) :: uerr,umax,uxmax
+integer :: cg_iter,cg_tot,nl_iter,nl_tot
+logical :: nl_isconv ! logical variable to check convergence of
+! nonlinear (NL) iterations
+
+real(kind=kreal) :: cmat(nst,nst),devp(nst),deps(nst),eps(nst),estrain(nst),      &
+estrain0(nst),erate(nst),evp(nst),flow(nst,nst),m1(nst,nst),m2(nst,nst),          &
+m3(nst,nst),effsigma(nst),dsigma(nst),esigma0(nst),esigma(nst),sigma(nst),vsigma(nst),      &
+vsigma0(nst)
+! dynamic arrays
+integer,allocatable::gdof(:,:),gdof_elmt(:,:),num(:),node_valency(:)
+! factored parameters
+real(kind=kreal),allocatable :: cohf(:),nuf(:),phif(:),psif(:),ymf(:)
+real(kind=kreal),allocatable::bodyload(:),viscoload(:),bmat(:,:),bload(:),vload(:),resload(:),coord(:,:),      &
+der(:,:),deriv(:,:),dprecon(:),eld(:),eload(:),evpt(:,:,:),excavload(:,:),    &
+dextload(:),extload(:),textload(:),ubcload(:),jac(:,:),load(:),bcnodalu(:,:),nodalu(:,:),km(:,:),storkm(:,:,:),&
+oldx(:),dx(:),           &
+x(:),elas_strain(:,:,:),stress_local(:,:,:),elas_strain0(:,:,:),stress_global(:,:),scf(:),vmeps(:)
+!,psigma(:,:),psigma0(:,:),taumax(:),nsigma(:)
+integer,allocatable :: egdof(:) ! elemental global degree of freedom
+
+integer :: map2exodus(8),ngllxy,node_hex8(8)
+real(kind=kreal),allocatable :: dshape_hex8(:,:,:)
+real(kind=kreal),parameter :: jacobi_alpha=0.0_kreal,jacobi_beta=0.0_kreal
+!double precision
+real(kind=kreal),allocatable :: xigll(:),wxgll(:) !double precision
+real(kind=kreal),allocatable :: etagll(:),wygll(:) !double precision
+real(kind=kreal),allocatable :: zetagll(:),wzgll(:) !double precision
+real(kind=kreal),allocatable :: gll_weights(:),gll_points(:,:)
+real(kind=kreal),allocatable :: lagrange_gll(:,:),dlagrange_gll(:,:,:)
+
+character(len=250) :: inp_fname,out_fname,prog
+character(len=150) :: path
+character(len=20), parameter :: wild_char='********************'
+character(len=20) :: ensight_etype
+character(len=80) :: buffer,destag ! this must be 80 characters long
+character(len=20) :: ext !,format_str,ptail
+character(len=250) :: case_file,geo_file !,sum_file
+integer :: npart,tinc,tstart,twidth,ts !ets: time set for ensight gold
+
+real(kind=kreal) :: cpu_tstart,cpu_tend,telap,step_telap,max_telap,mean_telap
+
+logical :: gravity,pseudoeq ! gravity load and pseudostatic load
+real(kind=kreal),allocatable :: wpressure(:) ! water pressure
+logical,allocatable :: submerged_node(:)
+
+! excavation
+integer :: id0,id1
+integer :: ielmt_intact,ielmt_void,nelmt_intact,nelmt_void
+integer,allocatable :: elmt_intact(:),elmt_void(:)
+integer :: inode_intact,inode_void,nnode_intact,nnode_void
+integer,allocatable :: nmir(:),node_intact(:),node_void(:)
+logical,allocatable :: ismat(:),isnode(:)
+
+! viscoelastic parameters
+integer :: ielmt_elas,ielmt_viscoelas,imatve,iviscoelas,nelmt_elas,nelmt_viscoelas
+integer :: nmat_elas
+integer,allocatable :: eid_elas(:),eid_viscoelas(:),imat_viscoelas(:)
+real(kind=kreal),allocatable :: bulkmod(:),shearmod(:),relaxtime(:,:)
+real(kind=kreal),allocatable :: visco_hvar0(:,:,:,:),visco_stress0(:,:,:,:),elas_stress0(:,:,:,:)
+real(kind=kreal) :: strain_mean,strain_dev
+real(kind=kreal) :: dt_viscoelas,mdiag(nst),time,fac
+real(kind=kreal) :: trace_vsigma0,trace_strain,tratio
+real(kind=kreal) :: hvar0(nst),hvar(nst),esigma0_dev(nst),esigma_dev(nst),shearRatio(nmaxwell)
+
+!logical :: ismpi !.true. : MPI, .false. : serial
+integer :: ipart !,myid,nproc
+integer :: tot_nelmt,max_nelmt,min_nelmt,tot_nnode,max_nnode,min_nnode
+integer :: tot_neq,max_neq,min_neq
+integer :: ngpart,maxngnode
+! number of active ghost partitions for a node
+integer,allocatable :: ngpart_node(:)
+character(len=250) :: errtag ! error message
+integer :: errcode
+logical :: isopen ! flag to check whether the file is opened
+
+errtag=""; errcode=-1
+
+ipart=myid-1 ! partition id starts from 0
+
+allocate(ismat(nmat))
+ismat=.true.
+
+ngllxy=ngllx*nglly
+ensight_etype='hexa8'
+
+! map sequential node numbering to exodus/cubit order for 8-noded hexahedra
+map2exodus=(/ 1,2,4,3,5,6,8,7 /)
+
+! Bulk modulus and Shear modulus
+allocate(bulkmod(nmat),shearmod(nmat))
+do i=1,nmat
+  bulkmod(i)=ym(i)/(r3*(one-two*nu(i)))
+  shearmod(i)=half*ym(i)/(one+nu(i))
+enddo
+! count elastic and viscoelastic materials
+allocate(imat_viscoelas(nmat))
+imat_viscoelas=0; nmat_elas=0; nmat_viscoelas=0
+do i=1,nmat
+  if(mat_domain(i)==1)then
+    nmat_elas=nmat_elas+1
+  elseif(mat_domain(i)==2)then
+    nmat_viscoelas=nmat_viscoelas+1
+    imat_viscoelas(i)=nmat_viscoelas
+  else
+    write(*,*)'ERROR: unrecognized material domain',mat_domain(i),'!'
+    stop
+  endif
+enddo
+allocate(relaxtime(nmaxwell,nmat_viscoelas))
+!print*,lbound(relaxtime);stop
+! compute relax time
+iviscoelas=0
+do i=1,nmat
+  if(mat_domain(i)==2)then
+    iviscoelas=iviscoelas+1
+    !print*,i,size(viscosity)
+    !relaxtime(:,iviscoelas)=viscosity(:,iviscoelas)/ym(i)
+    relaxtime(:,iviscoelas)=viscosity(:,iviscoelas)/shearmod(i)
+  endif
+enddo
+
+print*,'Relax time => min:',minval(relaxtime),' max:',maxval(relaxtime)
+! count elastic and viscoelastic elements
+nelmt_elas=0; nelmt_viscoelas=0
+do i_elmt=1,nelmt
+  if(mat_domain(mat_id(i_elmt))==1)then
+    nelmt_elas=nelmt_elas+1
+  elseif(mat_domain(mat_id(i_elmt))==2)then
+    nelmt_viscoelas=nelmt_viscoelas+1
+  else
+    write(*,*)'ERROR: unrecognized material domain',mat_domain(mat_id(i_elmt)),'!'
+    stop
+  endif
+enddo
+if(nelmt/=nelmt_elas+nelmt_viscoelas)then
+  write(*,*)'ERROR: total number of elements mismatch!'
+  stop
+endif
+allocate(eid_elas(nelmt_elas),eid_viscoelas(nelmt_viscoelas))
+allocate(elas_stress0(nst,nmaxwell,ngll,nelmt_viscoelas),                        &
+visco_hvar0(nst,nmaxwell,ngll,nelmt_viscoelas),                                  &
+visco_stress0(nst,nmaxwell,ngll,nelmt_viscoelas))
+! save element ID separately for elastic and viscoelastic elements
+ielmt_elas=0; ielmt_viscoelas=0
+do i_elmt=1,nelmt
+  if(mat_domain(mat_id(i_elmt))==1)then
+    ielmt_elas=ielmt_elas+1
+    eid_elas(ielmt_elas)=i_elmt
+  elseif(mat_domain(mat_id(i_elmt))==2)then
+    ielmt_viscoelas=ielmt_viscoelas+1
+    eid_viscoelas(ielmt_viscoelas)=i_elmt
+  endif
+enddo
+
+! apply displacement boundary conditions
+allocate(bcnodalu(nndof,nnode))
+bcnodalu=zero
+if(myid==1)write(stdout,'(a)',advance='no')'applying BC...'
+allocate(gdof(nndof,nnode),stat=istat)
+if (istat/=0)then
+  write(stdout,*)'ERROR: cannot allocate memory!'
+  stop
+endif
+gdof=1
+call apply_bc(ismpi,myid,nproc,bcnodalu,gdof,neq,errcode,errtag)
+if(errcode/=0)call error_stop(errtag,stdout,myid)
+if(myid==1)write(stdout,*)'complete!'
+!-------------------------------------
+
+allocate(isnode(nnode),num(nenod),evpt(nst,ngll,nelmt),coord(ngnod,ndim),      &
+jac(ndim,ndim),der(ndim,ngnod),deriv(ndim,nenod),bmat(nst,nedof),eld(nedof),   &
+bload(nedof),vload(nedof),eload(nedof),nodalu(nndof,nnode),egdof(nedof),stat=istat)
+if (istat/=0)then
+  write(stdout,*)'ERROR: cannot allocate memory!'
+  stop
+endif
+
+tot_neq=sumscal(neq); max_neq=maxscal(neq); min_neq=minscal(neq)
+if(myid==1)then
+  write(stdout,*)'degrees of freedoms => total:',tot_neq,' max:',max_neq,      &
+  ' min:',min_neq
+endif
+
+! get gll points and weights
+allocate(xigll(ngllx),wxgll(ngllx),etagll(nglly),wygll(nglly),zetagll(ngllz),  &
+wzgll(ngllz))
+call zwgljd(xigll,wxgll,ngllx,jacobi_alpha,jacobi_beta)
+call zwgljd(etagll,wygll,nglly,jacobi_alpha,jacobi_beta)
+call zwgljd(zetagll,wzgll,ngllz,jacobi_alpha,jacobi_beta)
+
+! get derivatives of shape functions for 8-noded hex
+allocate(dshape_hex8(ndim,ngnod,ngll))
+call dshape_function_hex8(ndim,ngnod,ngllx,nglly,ngllz,xigll,etagll,zetagll,   &
+dshape_hex8)
+deallocate(xigll,wxgll,etagll,wygll,zetagll,wzgll)
+! compute gauss-lobatto-legendre quadrature information
+allocate(gll_weights(ngll),gll_points(ndim,ngll),lagrange_gll(ngll,ngll),      &
+dlagrange_gll(ndim,ngll,ngll))
+call gll_quadrature(ndim,ngllx,nglly,ngllz,ngll,gll_points,gll_weights,        &
+lagrange_gll,dlagrange_gll)
+!--------------------------------
+
+! store elemental global degrees of freedoms from nodal gdof
+! this removes the repeated use of reshape later but it has larger size than gdof!!!
+allocate(gdof_elmt(nedof,nelmt))
+gdof_elmt=0
+do i_elmt=1,nelmt
+  gdof_elmt(:,i_elmt)=reshape(gdof(:,g_num(:,i_elmt)),(/nedof/)) !g=g_g(:,i_elmt)
+enddo
+!-------------------------------
+
+if(myid==1)write(stdout,'(a)',advance='no')'preprocessing...'
+
+! initalize intact elements and nodes
+nnode_intact=nnode; nelmt_intact=nelmt
+nnode_void=0; nelmt_void=0
+allocate(node_intact(nnode_intact),elmt_intact(nelmt_intact))
+node_intact=(/ (i,i=1,nnode) /)
+elmt_intact=(/ (i,i=1,nelmt) /)
+
+allocate(elas_strain(nst,ngll,nelmt),elas_strain0(nst,ngll,nelmt),stress_local(nst,ngll,nelmt))
+! compute initial stress assuming elastic domain
+stress_local=zero
+if(isstress0)then
+if(s0_type==0)then
+  ! compute initial stress using SEM itself
+
+  allocate(extload(0:neq),dx(0:neq),dprecon(0:neq),storkm(nedof,nedof,          &
+  nelmt_intact),stat=istat) ! elastic(0:neq),
+  if (istat/=0)then
+    write(stdout,*)'ERROR: cannot allocate memory!'
+    stop
+  endif
+  extload=zero; gravity=.true.; pseudoeq=.false.
+  call stiffness_bodyload(nelmt_intact,neq,gnod,g_num(:,elmt_intact),          &
+  gdof_elmt(:,elmt_intact),mat_id(elmt_intact),gam,nu,ym,dshape_hex8,          &
+  lagrange_gll,dlagrange_gll,gll_weights,storkm,dprecon,extload,gravity,       &
+  pseudoeq)
+
+  !print*,minval(dprecon),maxval(dprecon)
+  !print*,minval(extload),maxval(extload)
+  !print*,minval(storkm),maxval(storkm)
+  !stop
+  if(myid==1)write(stdout,*)'complete!'
+  !-------------------------------
+
+!  ! apply traction boundary conditions
+!  if(istraction)then
+!    if(myid==1)write(*,'(a)',advance='no')'applying traction...'
+!    call apply_traction(ismpi,myid,nproc,gnod,gdof,neq,extload,errcode,errtag)
+!    if(errcode/=0)call error_stop(errtag,stdout,myid)
+!    if(myid==1)write(*,*)'complete!'
+!  endif
+!  !-------------------------------
+!
+!  ! compute water pressure
+!  if(iswater)then
+!    if(myid==1)write(stdout,'(a)',advance='no')'computing water pressure...'
+!    allocate(wpressure(nnode),submerged_node(nnode))
+!    call compute_pressure(ismpi,myid,nproc,wpressure,submerged_node,errcode,   &
+!    errtag)
+!    if(errcode/=0)call error_stop(errtag,stdout,myid)
+!    ! write pore pressure file
+!
+!    ! open Ensight Gold data file to store data
+!    out_fname=trim(out_path)//trim(file_head)//trim(ptail)//'.por'
+1    npart=1;
+!    destag='Pore pressure'
+!    call write_ensight_pernode(out_fname,destag,npart,1,nnode,real(wpressure))
+!    if(myid==1)write(stdout,*)'complete!'
+!  endif
+  !-------------------------------
+
+  if(myid==1)write(stdout,'(a)')'--------------------------------------------'
+
+  ! prepare ghost partitions for the communication
+  call prepare_ghost(myid,nproc,gdof,ngpart,maxngnode)
+
+  ! assemble from ghost partitions
+  call assemble_ghosts(myid,ngpart,maxngnode,nndof,neq,dprecon,dprecon)
+  !print*,minval(dprecon),maxval(dprecon)
+  !print*,minval(storkm),maxval(storkm)
+  !stop
+  dprecon(1:)=one/dprecon(1:); dprecon(0)=zero
+
+  ! compute displacement due to graviy loading to compute initial stress
+  dx=zero
+  call pcg_solver(myid,ngpart,maxngnode,neq,nelmt_intact,storkm,dx,extload,     &
+  dprecon,gdof_elmt(:,elmt_intact),cg_iter,errcode,errtag)
+  if(errcode/=0)call error_stop(errtag,stdout,myid)
+  dx(0)=zero
+
+  call elastic_stress(nelmt,neq,gnod,g_num,gdof_elmt,mat_id,dshape_hex8,       &
+  dlagrange_gll,dx,stress_local)
+  deallocate(extload,dprecon,dx,storkm)
+elseif(s0_type==1)then
+  ! compute initial stress using simple relation for overburden pressure
+  call overburden_stress(nelmt,g_num,mat_id,z_datum,s0_datum,epk0,stress_local)
+else
+  write(stdout,*)'ERROR: s0_type:',s0_type,' not supported!'
+  stop
+endif
+endif
+!-------------------------------
+
+allocate(dextload(0:neq),extload(0:neq),textload(0:neq),ubcload(0:neq))
+extload=zero
+! apply traction boundary conditions
+if(istraction)then
+  if(myid==1)write(*,'(a)',advance='no')'applying traction...'
+  call apply_traction(ismpi,myid,nproc,gnod,gdof,neq,extload,errcode,errtag)
+  if(errcode/=0)call error_stop(errtag,stdout,myid)
+  if(myid==1)write(*,*)'complete!'
+endif
+
+allocate(stress_global(nst,nnode),vmeps(nnode))
+allocate(scf(nnode)) !,psigma(ndim,nnode),psigma0(ndim,nnode),taumax(nnode),nsigma(nnode))
+allocate(nmir(nnode),node_valency(nnode))
+
+! compute node valency only once
+node_valency=0
+do i_elmt=1,nelmt_intact
+  ielmt=elmt_intact(i_elmt)
+  num=g_num(:,ielmt)
+  node_valency(num)=node_valency(num)+1
+enddo
+
+! open summary file
+!sum_file = trim(out_path)//trim(file_head)//'_summary'//trim(ptail)
+open(unit=10,file=trim(sum_file),status='old',position='append',action='write',&
+iostat=ios)
+write(10,*)'CG_MAXITER, CG_TOL, NL_MAXITER, NL_TOL'
+write(10,*)cg_maxiter,cg_tol,nl_maxiter,nl_tol
+write(10,*)'Number of SRFs'
+write(10,*)nsrf
+
+allocate(cohf(nmat),nuf(nmat),phif(nmat),psif(nmat),ymf(nmat))
+
+if(myid==1)then
+  write(stdout,'(a,e10.4,a,i5)')'CG_TOL:',cg_tol,' CG_MAXITER:',cg_maxiter
+  write(stdout,'(a,e10.4,a,i5)')'NL_TOL:',nl_tol,' NL_MAXITER:',nl_maxiter
+  write(stdout,'(a)',advance='no')'SRFs:'
+  do i_srf=1,nsrf
+    write(stdout,'(f7.4,1x)',advance='no')srf(i_srf)
+  enddo
+  write(stdout,*)
+  write(stdout,'(a,i3)')'nexcav:',nexcav
+  write(stdout,'(/,a)')'--------------------------------------------'
+endif
+
+!srf_loop: do i_srf=1,nsrf
+!write(10,*)'SRF'
+!write(10,*)srf(i_srf)
+write(10,*)'Number of time steps'
+write(10,*)ntstep
+write(10,*)'STEP, CGITER, NLITER, UXMAX, UMAX'
+close(10)
+
+allocate(load(0:neq),bodyload(0:neq),viscoload(0:neq),oldx(0:neq),resload(0:neq), &
+dx(0:neq),x(0:neq),dprecon(0:neq),km(nedof,nedof),storkm(nedof,nedof, &
+nelmt_intact),stat=istat) ! elastic(0:neq),
+if (istat/=0)then
+  write(stdout,*)'ERROR: cannot allocate memory!'
+  stop
+endif
+
+allocate(excavload(nndof,nnode))
+allocate(ngpart_node(nnode))
+
+! compute stable time step for implicit integration
+!dt=inftol
+dt=dtstep
+!do i=1,nmat_viscoelas
+!  dt_viscoelas=minval(relaxtime(:,i))
+!  if(dt_viscoelas<dtstep)dt=dt_viscoelas
+!enddo
+! TODO interpolate or discretize if necessary
+!print*,dt; stop
+!print*,bulkmod; stop
+! time stepping loop
+nl_tot=0
+elas_stress0=zero
+visco_hvar0=zero
+visco_stress0=zero
+nodalu=zero
+bodyload=zero; viscoload=zero
+dextload=zero ! incremental external load
+textload=zero; ubcload=zero
+load=zero
+
+x=zero
+!print*,dt,relaxtime;stop
+open(17,file="viscoelastic_rod8mm_plot.dat",action="write",status="replace")
+!print*,ntstep;stop
+!print*,minval(g_coord),maxval(g_coord)
+time_step: do i_tstep=0,ntstep
+  nodalu=zero; !extload=zero ! WARNING:remove this last statement for traction or modify
+  ubcload=zero
+  write(*,'(a,a,i4)')CR,'step:',i_tstep  
+  !if(i_tstep==0)dt=zero
+  !!stiffness and preconditioner
+  !! compute stiffness matrix
+  !gravity=.false.; pseudoeq=.false.
+  !call stiffness_bodyload(nelmt_intact,neq,gnod,g_num(:,elmt_intact),          &
+  !gdof_elmt(:,elmt_intact),mat_id(elmt_intact),gam,nuf,ym,dshape_hex8,         &
+  !lagrange_gll,dlagrange_gll,gll_weights,storkm,dprecon)!,extload,gravity,pseudoeq)
+
+  !! assemble from ghost partitions
+  !call assemble_ghosts(myid,ngpart,maxngnode,nndof,neq,dprecon,dprecon)
+  !dprecon(0)=zero; dprecon(1:)=one/dprecon(1:)
+  !print*,maxval(abs(extload));stop
+
+  dprecon=zero
+  ! Purely elastic elements 
+  do i_elmt=1,nelmt_elas
+    ielmt=eid_elas(i_elmt)
+    imat=mat_id(ielmt)
+    call compute_cmat(cmat,ym(imat),nu(imat))
+    !call compute_cmat_elas(nst,bulkmod(mat_id(ielmt)),shearmod(mat_id(ielmt)),cmat)
+    num=g_num(:,ielmt)
+    coord=transpose(g_coord(:,num(gnod))) !transpose(g_coord(:,num(1:ngnod)))  
+    egdof=gdof_elmt(:,i_elmt) !reshape(gdof(:,g_num(:,ielmt)),(/nndof*nenod/)) !g=g_g(:,i_elmt)
+    km=zero
+    eld=zero    
+    do i=1,ngll
+      !call shape_function(fun,gll_points(i))
+      ! compute Jacobian at GLL point using 20 noded element
+      !call shape_derivative(der,gll_points(:,i)) 
+      jac=matmul(dshape_hex8(:,:,i),coord) !jac=matmul(der,coord) 
+      detjac=determinant(jac)
+      call invert(jac)
+      
+      deriv=matmul(jac,dlagrange_gll(:,i,:)) ! use der for gll
+      call compute_bmat(bmat,deriv) !!! gll bmat matrix          
+      km=km+matmul(matmul(transpose(bmat),cmat),bmat)*detjac*gll_weights(i)
+      eld(3:nedof:3)=eld(3:nedof:3)+lagrange_gll(i,:)*detjac*gll_weights(i)
+    end do ! i=1,ngll  
+    storkm(:,:,ielmt)=km    
+    do k=1,nedof
+      dprecon(egdof(k))=dprecon(egdof(k))+km(k,k)
+    end do
+    
+!!    if(i_tstep==1)then
+    ! modify RHS vector for prescribed displacements
+    iedof=0
+    do j=1,nenod
+      do i=1,nndof
+        iedof=iedof+1
+        if(bcnodalu(i,num(j))/=zero)then
+          ubcload(egdof)=ubcload(egdof)-km(:,iedof)*bcnodalu(i,num(j))
+        endif
+      enddo
+    enddo
+!!    endif
+    ! gravity load
+    !extload(egdof)=extload(egdof)-eld*gam(mat_id(ielmt))
+  end do ! i_elmt=1,nelmt
+  !stop
+  ! Viscoelastic elements
+  do i_elmt=1,nelmt_viscoelas
+    ielmt=eid_viscoelas(i_elmt)
+    imat=mat_id(ielmt)
+    imatve=imat_viscoelas(imat)
+    call compute_cmat(cmat,ym(imat),nu(imat))
+    !  call compute_cmat_viscoelas(bulkmod(mat_id(ielmt)),shearmod(mat_id(ielmt)),dt, &
+    !  nmaxwell,relaxtime(:,imatve),muratio(:,imatve),nst,cmat)
+    num=g_num(:,i_elmt)
+    coord=transpose(g_coord(:,num(gnod))) !transpose(g_coord(:,num(1:ngnod)))  
+    egdof=gdof_elmt(:,ielmt) !reshape(gdof(:,g_num(:,ielmt)),(/nndof*nenod/)) !g=g_g(:,i_elmt)
+    km=zero
+    eld=zero    
+    do i=1,ngll
+      !call shape_function(fun,gll_points(i))
+      ! compute Jacobian at GLL point using 20 noded element
+      !call shape_derivative(der,gll_points(:,i)) 
+      jac=matmul(dshape_hex8(:,:,i),coord) !jac=matmul(der,coord) 
+      detjac=determinant(jac)
+      call invert(jac)
+      
+      deriv=matmul(jac,dlagrange_gll(:,i,:)) ! use der for gll
+      call compute_bmat(bmat,deriv) !!! gll bmat matrix          
+      km=km+matmul(matmul(transpose(bmat),cmat),bmat)*detjac*gll_weights(i)
+      eld(3:nedof:3)=eld(3:nedof:3)+lagrange_gll(i,:)*detjac*gll_weights(i)
+    end do ! i=1,ngll  
+    storkm(:,:,ielmt)=km
+    do k=1,nedof
+      dprecon(egdof(k))=dprecon(egdof(k))+km(k,k)
+    end do
+
+!!    if(i_tstep==1)then
+    ! modify RHS vector for prescribed displacements
+    iedof=0
+    do j=1,nenod
+      do i=1,nndof
+        iedof=iedof+1
+        if(bcnodalu(i,num(j))/=zero)then
+          ubcload(egdof)=ubcload(egdof)-km(:,iedof)*bcnodalu(i,num(j))
+        endif
+      enddo
+    enddo
+!!    endif
+    ! gravity load
+    !extload(egdof)=extload(egdof)-eld*gam(mat_id(ielmt))
+  end do ! i_elmt=1,nelmt
+  dprecon(1:)=one/dprecon(1:)
+  dprecon(0)=zero; extload(0)=zero
+  
+  ! set BC nodal displacements to nodalu array
+  do i=1,nndof
+    do j=1,nnode
+      if(bcnodalu(i,j)/=zero)nodalu(i,j)=bcnodalu(i,j)
+    enddo
+  enddo
+  
+  cg_tot=0; nl_iter=0
+  
+  ! load incremental loop
+  !if(myid==1)write(stdout,'(a,i10)')' total load increments:',ninc  
+  ! load factor
+  ! linear
+  !fac=real(i_tstep,kreal)/real(ntstep,kreal)
+    
+  ! error function
+  !n=100; we=5;
+  !x=(1:n)-0.5*n;
+  !x=(we/n)*x;
+  !fac=(i_tstep-half*ntstep)*5.0_kreal/real(ntstep,kreal)  
+  !fac=half*(one+erf(fac));
+  
+  if(i_tstep>100)extload=zero
+  !if(i_tstep==1)extload=extload
+  !if(i_tstep>1)extload=zero
+  !if(i_tstep==10)extload=-extload  
+
+  !extload=extload/ninc
+  !load_increment: do i_inc=1,ninc
+  !bodyload=zero
+  !evpt=zero
+  
+  !print*,maxval(abs(ubcload));stop
+  dx=zero; ! x=zero
+  !load=extload+ubcload+resload
+  !load=load+extload-bodyload !viscoload
+  !load=extload-bodyload-viscoload
+  !load=extload-bodyload !-viscoload
+  load=extload-viscoload
+  load(0)=zero
+  print*,'Load',maxval(abs(load))
+  ! nonlinear iteration loop
+  nonlinear: do i_nliter=1,1
+    nl_iter=nl_iter+1
+!    if(i_nliter==1)then
+!      resload=dextload+ubcload-bodyload!+viscoload ! print*,maxval(abs(load)); stop
+!    else
+!      resload=dextload-bodyload;!viscoload ! print*,maxval(abs(load)); stop
+!    endif
+!    !if(i_nliter>1)resload=viscoload; viscoload=zero
+!    !load(0)=zero
+!    resload(0)=zero
+    !dx(0)=zero
+    print*,'Residual NL:',maxval(abs(load))
+    
+    ! check convergence
+    !uerr=maxvec(abs(dx))/maxvec(abs(x))!maxvec(abs(resload))!/maxvec(abs(dextload)) ! this name has to be changed for a general variable name
+    !write(*,'(a,a,i4,a,e12.6)',advance='no')CR,' nl_iter:',nl_iter, &
+    !' res:',uerr
+    !nl_isconv=uerr.le.nl_tol
+    !if(nl_iter==1)nl_isconv=.false.
+    !print*,'hi0',nl_isconv
+    !if(nl_isconv.or.nl_iter>nl_maxiter)then
+    !  ! update strain
+    !  elas_strain0=elas_strain; ! elas_strain(0)=zero
+    !  visco_stress0=visco_stress
+    !  exit nonlinear
+    !endif
+    
+    ! pcg solver
+    !call pcg_solver(myid,ngpart,maxngnode,neq,nelmt,storkm,dx,load,dprecon, &
+    !gdof_elmt,cg_iter,errcode,errtag)
+    call pcg_solver(myid,ngpart,maxngnode,neq,nelmt,storkm,dx,load,dprecon, &
+    gdof_elmt,cg_iter,errcode,errtag)
+    if(errcode/=0)call error_stop(errtag,stdout,myid)
+    cg_tot=cg_tot+cg_iter
+    dx(0)=zero
+    x=x+dx
+
+    ! check convergence
+    uerr=zero
+    uerr=maxval(abs(dx))/maxval(abs(x))
+    nl_isconv=uerr.le.nl_tol
+    if(maxval(abs(resload)).le.zerotol)nl_isconv=.true.
+    
+    write(*,'(a,e12.6,a,e12.6,a,e12.6)',advance='no')'u_error:',sqrt(norm(dx)/norm(x)),' UErr:', &
+    maxvec(abs(dx))/maxval(abs(x)),' umax:',maxval(abs(x))
+
+    ! update total nodal displacement
+    !u(t+1)=u(t)+du
+    do i=1,nndof
+      do j=1,nnode
+        if(gdof(i,j)/=0)then
+          nodalu(i,j)=x(gdof(i,j)) ! time steps are not incremental!!
+        endif
+      enddo
+    enddo
+
+    if(allelastic)then
+      call elastic_stress(nelmt,neq,gnod,g_num,gdof_elmt,mat_id,dshape_hex8,   &
+      dlagrange_gll,dx,stress_local)
+      exit nonlinear
+    endif    
+   
+    bodyload=zero; viscoload=zero
+   
+    ! compute stress
+    do i_elmt=1,nelmt_elas
+      ielmt=eid_elas(i_elmt)
+      imat=mat_id(ielmt)
+      call compute_cmat(cmat,ym(imat),nu(imat))
+      !call compute_cmat_elas(nst,bulkmod(mat_id(ielmt)),shearmod(mat_id(ielmt)),cmat)
+      num=g_num(:,ielmt)
+      coord=transpose(g_coord(:,num(gnod))) !transpose(g_coord(:,num(1:ngnod)))
+      egdof=gdof_elmt(:,ielmt) !reshape(gdof(:,g_num(:,ielmt)),(/nedof/)) !g=g_g(:,i_elmt)
+      eld=reshape(nodalu(:,g_num(:,ielmt)),(/nedof/)) !x(egdof)         
+      bload=zero
+      do i=1,ngll ! loop over integration points
+        !call shape_derivative(der,gll_points(:,i)) 
+        jac=matmul(dshape_hex8(:,:,i),coord) !jac=matmul(der,coord)        
+        detjac=determinant(jac)
+        call invert(jac)
+
+        deriv=matmul(jac,dlagrange_gll(:,i,:)) 
+        call compute_bmat(bmat,deriv)
+        estrain=matmul(bmat,eld)
+        elas_strain0(:,i,ielmt)=estrain !+elas_strain(:,i,ielmt)
+        sigma=matmul(cmat,estrain)
+        !print*,'Elastic stress',maxval(abs(sigma)); stop
+        stress_local(:,i,ielmt)=sigma !+stress_local(:,i,ielmt)
+
+        if(nl_isconv .or. nl_iter==nl_maxiter)then
+          elas_strain0(:,i,ielmt)=estrain      
+        endif      
+        
+        eload=matmul(sigma,bmat)
+        bload=bload+eload*detjac*gll_weights(i)
+      enddo ! i
+      !!----compute the total bodyloads vector----
+      !bodyload(egdof)=bodyload(egdof)+bload
+    enddo
+    
+    ! viscoelastic elemenets
+    do i_elmt=1,nelmt_viscoelas
+      ielmt=eid_viscoelas(i_elmt)
+      imat=mat_id(ielmt)
+      imatve=imat_viscoelas(imat)
+      !call compute_cmat_viscoelas(cmat,ym(mat_id(i_elmt)),nu(mat_id(i_elmt)))
+      shearRatio=one ! for single maxwell element
+      !call compute_cmat_elas(bulkmod(imat),shearmod(imat),dt,nmaxwell,relaxtime,shearRatio,nst,cmat)
+      call compute_cmat(cmat,ym(imat),nu(imat))
+      num=g_num(:,ielmt)
+      coord=transpose(g_coord(:,num(gnod))) !transpose(g_coord(:,num(1:ngnod)))
+      egdof=gdof_elmt(:,ielmt) !reshape(gdof(:,g_num(:,ielmt)),(/nedof/)) !g=g_g(:,i_elmt)
+      eld=reshape(nodalu(:,g_num(:,ielmt)),(/nedof/)) !x(egdof)
+      bload=zero; vload=zero
+      do i=1,ngll ! loop over integration points
+        !call shape_derivative(der,gll_points(:,i)) 
+        jac=matmul(dshape_hex8(:,:,i),coord) !jac=matmul(der,coord)        
+        detjac=determinant(jac)
+        call invert(jac)
+
+        deriv=matmul(jac,dlagrange_gll(:,i,:)) 
+        call compute_bmat(bmat,deriv)
+        estrain=matmul(bmat,eld) ! strain at current time step
+        estrain0=elas_strain0(:,i,ielmt) ! strain at previous time step
+        !deps=estrain-estrain0
+        !print*,'time step',dt;stop
+        ! update vicoelastic state variable
+        !print*,size(muratio),size(relaxtime),size(visco_stress),imatve,ielmt,nelmt
+        !call update_viscous_q(nst,deps,dt,nmaxwell,muratio(:,imatve),relaxtime(:,imatve),visco_stress(:,:,i,ielmt))
+        
+        ! update total strain and stress      
+        elas_strain0(:,i,ielmt)=estrain !+elas_strain(:,i,ielmt)
+        !!if(i_tstep==0)then
+        esigma=matmul(cmat,estrain)
+        !!else
+        !!  visco_stress(:,:,i,ielmt)=visco_stress0(:,:,i,ielmt)
+        !!  call viscoe(nst,estrain,estrain0,visco_stress(:,:,i,ielmt),bulkmod(mat_id(ielmt)), &
+        !!  shearmod(mat_id(ielmt)),nmaxwell,muratio(:,imatve),relaxtime(:,imatve),dt,sigma,vsigma)
+        !!endif
+       
+        tratio=dt/relaxtime(1,imatve)
+
+        !-----------------second-order accurate method-------------------       
+        ! pervious stress & previous h variable
+        esigma0=elas_stress0(:,1,i,ielmt)
+        esigma0_dev=esigma0-one_third*(esigma0(1)+esigma0(2)+esigma0(3))*unit_voigt 
+        esigma_dev=esigma-one_third*(esigma(1)+esigma(2)+esigma(3))*unit_voigt
+        !esigma_dev=two*shearmod(imat)*(estrain-one_third*(estrain(1)+estrain(2)+estrain(3)))
+        !print*,esigma_dev
+        !print*,esigma_dev-two*shearmod(imat)*(estrain-one_third*(estrain(1)+estrain(2)+estrain(3)))
+        hvar0=visco_hvar0(:,1,i,ielmt)
+        hvar=exp(-tratio)*hvar0+hvisc(tratio)*(esigma_dev-esigma0_dev) !10.3.16
+        !hvar=exp(-tratio)*hvar0+exp(-half*tratio)*(esigma_dev-esigma0_dev) !10.3.12
+
+        vsigma=hvar !for Maxwell element but in general \sum(\gamma_i h_i) eq
+        !10.3.13 in Simo & Hughes)
+        print*,''
+        print*,'vsigma:',vsigma
+        print*,'esigma:',esigma
+        stop 
+        ! update
+        elas_stress0(:,1,i,ielmt)=esigma
+        visco_hvar0(:,1,i,ielmt)=hvar 
+        !-----------------second-order accurate method-------------------       
+
+        !! ----------------LATYCHEV's method------------------------------
+        !! previous visco stress
+        !vsigma0=visco_stress0(:,1,i,ielmt)
+        !    
+        !! update visco stress
+        !trace_vsigma0=vsigma0(1)+vsigma0(2)+vsigma0(3)
+        !trace_strain=estrain(1)+estrain(2)+estrain(3) 
+      
+        !if(tratio>one)stop 'time ratio is > 1.0' 
+        !vsigma=vsigma0*(one-tratio) - &
+        !  tratio*shearmod(imat)*(two*estrain-two_third*trace_strain*unit_voigt) + &
+        !  one_third*tratio*trace_vsigma0*unit_voigt 
+        !visco_stress0(:,1,i,ielmt)=vsigma 
+        !! ----------------LATYCHEV's method------------------------------
+        
+        !!-----------------ZIENCKIEWICZ-----------------------------------
+        !muratio=one ! for single maxwell element
+        !  vsigma0=visco_stress0(:,1,i,ielmt)
+        !  call viscoe(nst,estrain,estrain0,vsigma0,bulkmod(imat), &
+        !  shearmod(imat),nmaxwell,muratio(:,imatve),relaxtime(:,imatve),dt,sigma,vsigma)
+        !  visco_stress0(:,1,i,ielmt)=vsigma0 
+        !!-----------------ZIENCKIEWICZ-----------------------------------
+        
+        eload=matmul(esigma,bmat)
+        bload=bload+eload*detjac*gll_weights(i)
+        eload=matmul(vsigma,bmat)
+        vload=vload+eload*detjac*gll_weights(i)
+      enddo ! i
+      !----compute the total bodyloads vector----
+      bodyload(egdof)=bodyload(egdof)+bload
+      viscoload(egdof)=viscoload(egdof)+vload
+    enddo
+     
+    bodyload(0)=zero
+    viscoload(0)=zero
+    
+    uxmax=maxvec(abs(x))
+    print*,'hi',maxval(abs(viscoload)),maxval(abs(viscoload))
+
+    write(*,'(a,e12.6,1x,e12.6)',advance='yes')' max:',uxmax,elas_strain(1,1,100)
+
+    if(nl_isconv.or.nl_iter==nl_maxiter)exit
+  end do nonlinear ! nonlinear iteration
+
+!  ! update total nodal displacement
+!  !u(t+1)=u(t)+du
+!  do i=1,nndof
+!    do j=1,nnode
+!      if(gdof(i,j)/=0)then
+!        nodalu(i,j)=nodalu(i,j)+x(gdof(i,j)) !-elastic(gdof(i,j))
+!      endif
+!    enddo
+!  enddo
+
+  write(stdout,*)!stop
+  !stop
+  if(nl_iter>=nl_maxiter .and. .not.nl_isconv)then
+    write(stdout,*)'WARNING: nonconvergence in nonlinear iterations!'
+    write(stdout,*)'desired tolerance:',nl_tol,' achieved tolerance:',uerr
+  endif
+  !print*,'hi'
+  nl_tot=nl_tot+nl_iter
+  !if(myid==1)print*,cg_tot,nl_tot
+  ! update nodal displacement
+  !do i=1,nndof
+  !  do j=1,nnode
+  !    if(gdof(i,j)/=0)then
+  !      nodalu(i,j)=nodalu(i,j)+dx(gdof(i,j)) !-elastic(gdof(i,j))
+  !    endif
+  !  enddo
+  !enddo
+  !enddo load_increment ! load increment loop
+  !deallocate(load,bodyload,extload,oldx,dx,dprecon,storkm,stat=istat)
+  !if (istat/=0)then
+  !  write(stdout,*)'ERROR: cannot deallocate memory!'
+  !  stop
+  !endif
+  !print*,relaxtime(1,1);stop
+  if(nmat_viscoelas>0)then
+    write(17,*)dt*real(i_tstep),nodalu(1,1294),elas_strain(1,1,100),stress_local(1,1,100), &
+    shearmod*(one-muratio(1,1)+muratio(1,1)*exp(-(i_tstep)*dtstep/relaxtime(1,1)))
+  else
+    !write(17,*)dt*real(i_tstep),nodalu(1,1294),elas_strain(1,1,100),stress_local(1,1,100),shearmod
+    write(17,*)dt*real(i_tstep),fac,maxval(abs(nodalu))
+  endif
+
+  ! write summary
+  uxmax=maxvec(abs(reshape(nodalu,(/nndof*nnode/))))
+  umax=maxvec(sqrt(nodalu(1,:)*nodalu(1,:)+ &
+  nodalu(2,:)*nodalu(2,:)+nodalu(3,:)*nodalu(3,:)))
+  open(10,file=trim(sum_file),status='old',position='append',action='write')
+  write(10,*)i_tstep,cg_tot,nl_tot,uxmax,umax
+  close(10)
+
+101  call save_data(ptail,format_str,i_tstep,nnode,nelmt,g_num,nodalu)
+
+enddo time_step ! i_tstep time stepping loop
+close(17)
+!enddo srf_loop ! i_srf safety factor loop
+deallocate(mat_id,mat_domain,gam,ym,coh,nu,phi,psi,srf)
+deallocate(excavload,g_coord,g_num,isnode,nmir)
+call free_ghost(ngpart)
+!-----------------------------------
+
+return
+contains
+
+! TODO modify the below function according to original one
+function hvisc(x)
+!     Purpose: Compute integration factor for viscoelastic material
+!              H_visc(x) = [ 1 - exp(-x)]/x
+implicit  none
+real(kind=kreal) :: hvisc, x, expx
+
+expx=exp(-x)
+!print*,'Hello!'
+if(x.lt.1.d-04) then
+  hvisc = 1.d0 - 0.5d0*x*(1.d0 - x/3.d0*(1.d0 &
+          - 0.25d0*x*(1.d0 - 0.2d0*x)))
+else
+  hvisc = (1.d0 - expx)/x
+endif
+end function hvisc
+end subroutine semvisco3d
+!===========================================
+
+

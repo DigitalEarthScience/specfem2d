@@ -1,0 +1,20 @@
+#pre information
+#type=0: (DEFAULT) full mesh input, 1: specfem2d input
+preinfo: type=1, nproc=1, ngllx=5, nglly=5, ngllz=1, &
+nenod=4, ngnod=4, inp_path='/tigress/hgharti/gitwork/specfem2d/EXAMPLES/ryan/DATA', &
+out_path='/tigress/hgharti/gitwork/specfem2d/EXAMPLES/ryan/DATA'
+
+#mesh information
+mesh: type=1, xfile='proc000000_x.bin', yfile='proc000000_z.bin', confile='proc000000_NSPEC_ibool.bin'
+
+#material list
+material: matfile='proc000000_vp.bin', type=1, ispart=0
+
+#image parameters
+image: eps=0.001, gam=5.0, eta=5.0, mu=40.0 
+
+#control parameters
+control: ntstep=1
+
+#save data
+save: disp=1
