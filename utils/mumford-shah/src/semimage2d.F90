@@ -106,7 +106,7 @@ real(kind=kreal),allocatable :: wpressure(:) ! water pressure
 logical,allocatable :: submerged_node(:)
 
 real(kind=kreal),allocatable:: nodalg(:,:),nodalcg(:,:),nodalm0(:,:),nodalcm0(:,:),nodalccm0g(:,:),nodalnu0(:,:)
-real(kind=kreal),allocatable:: nodalm(:,:),nodalnu(:,:)
+real(kind=kreal),allocatable:: nodalm(:,:),nodalnu(:,:),nodalnuc(:)
 real(kind=4),allocatable:: elmtg(:,:)
 real(kind=kreal) :: energy 
 logical :: discardm
@@ -464,8 +464,9 @@ endif
 if(solver_type.eq.builtin_solver .and.solver_diagscale)allocate(ndscale(0:neq))
 allocate(nodalnu0(1,nnode),nodalm0(1,nnode))
 allocate(nodalnu(1,nnode),nodalm(1,nnode))
+allocate(nodalnuc(nnode))
 
-open(111,file=trim(out_path)//'energy,dat',action='write',status='replace')
+!open(111,file=trim(out_path)//'energy,dat',action='write',status='replace')
 ! initialize
 nodalnu0=one
 nodalm0=nodalg
@@ -587,6 +588,7 @@ time_step: do i_tstep=1,ntstep
       endif
     enddo
   enddo
+  !call convolve_with_gaussian(ismpi,gnod,2.0_kreal,nodalnu,nodalnuc,errcode,errtag)
   call save_nodal_data(ptail,format_str,i_tstep,nnode,nodalnu,'Edge detector','nu')
   print*,'complete!'
   ! update
@@ -710,11 +712,11 @@ time_step: do i_tstep=1,ntstep
 
   print*,'-----------------------------------------------------------------------'
 enddo time_step ! i_tstep time stepping loop
-close(111)
+!close(111)
 close(10)
 
 !  write \nabla.(\nu^2\nabla m)
-call save_specfem_output(gdof_elmt,interpfgll,nodalnu0,nodalm0)
+call save_specfem_output(ismpi,gnod,format_str,gdof_elmt,interpfgll,nodalnu0,nodalm0,nvalency)
 
 if(solver_type.eq.builtin_solver .and.solver_diagscale)deallocate(ndscale)
 if(mattype==0)deallocate(mat_id,mat_domain,gam,ym,coh,nu,phi,psi)

@@ -66,22 +66,28 @@ else
 endif
 npart=1;
 destag=trim(vtag)
+!print*,trim(out_fname)
 call write_ensight_pernodeVECAS(out_fname,destag,npart,1,nnode,real(nodalv))
 
 end subroutine save_nodal_data
 
 !===============================================================================
 ! Jeroen's note on Mumford-Shah eq (2)
-subroutine save_specfem_output(gdof_elmt,interpfgll,nodalnu,nodalm)
+subroutine save_specfem_output(ismpi,gnod,format_str,gdof_elmt,interpfgll,nodalnu,nodalm,nvalency)
 use global
 use math_constants,only:ONE,TWO,HALF,zero
 use math_library,only:norm
 use string_library,only:parse_file
+use blur,only:convolve_with_gaussian
 implicit none
+logical,intent(in) :: ismpi ! .true.=parallel version, .false.=serial version
+integer,intent(in) :: gnod(4)!geometrical nodes (corner nodes) per element
+character(len=20),intent(in) :: format_str
 integer,intent(in) :: gdof_elmt(nedof,nelmt)
 real(kind=kreal),intent(in) :: interpfgll(ngll,ngll)
 real(kind=kreal),intent(in) :: nodalnu(1,nnode)
 real(kind=kreal),intent(in) :: nodalm(1,nnode)
+integer,intent(in) :: nvalency(nnode)
 
 integer :: num(ngll)
 real(kind=kreal) :: TwoGam,TwoEtaEps,HalfEtaOverEps
@@ -89,11 +95,19 @@ real(kind=kreal) :: dinterpf(ndim,ngll),interpf(ngll,1)
 real(kind=kreal) :: gradmsq(ngll),gradm(ndim,1),nusqgradm(ndim,ngll),mgllmat(ngll,1)
 real(kind=kreal) :: divgradnu,gradnu(ndim,1),gradnugll(ndim,ngll),nugllmat(ngll,1)
 real(kind=kreal),allocatable :: dmterm(:,:),dnuterm(:,:)
+real(kind=kreal),allocatable :: nodal_dmterm(:),nodal_dnuterm(:)
+real(kind=kreal),allocatable :: nodal_dmtermc(:),nodal_dnutermc(:)
 integer :: i_elmt,i
 
 character(len=250) :: matfile_head
 character(len=150) :: path
 character(len=20) :: ext
+
+character(len=250) :: errtag ! error message
+integer :: errcode
+
+errtag=""; errcode=-1
+
 ! factors
 TwoGam=two*gam_img
 TwoEtaEps=two*eta_img*eps_img
@@ -142,11 +156,34 @@ call parse_file(matfile,path,matfile_head,ext)
 open(11,file=trim(out_path)//trim(matfile_head)//'_dnu.'//trim(ext),            &
 access='stream',form='unformatted',action='write',status='replace')
 write(11)dnuterm
-deallocate(dnuterm)
+close(11)
+allocate(nodal_dnuterm(nnode),nodal_dnutermc(nnode))
+nodal_dnuterm=zero
+
+do i_elmt=1,nelmt
+  num=g_num(:,i_elmt)
+  nodal_dnuterm(num)=nodal_dnuterm(num)+dnuterm(:,i_elmt)
+enddo
+nodal_dnuterm=nodal_dnuterm/nvalency
+!call convolve_with_gaussian(ismpi,gnod,2.0_kreal,nodal_dnuterm,nodal_dnutermc,errcode,errtag)
+call save_nodal_data(ptail,format_str,0,nnode,nodal_dnuterm,'dnu','dnu',.false.)
+deallocate(nodal_dnuterm,nodal_dnutermc)
+
 open(11,file=trim(out_path)//trim(matfile_head)//'_dm.'//trim(ext),             &
 access='stream',form='unformatted',action='write',status='replace')
 write(11)dmterm
-deallocate(dmterm)
+close(11)
+allocate(nodal_dmterm(nnode),nodal_dmtermc(nnode))
+nodal_dmterm=zero
+
+do i_elmt=1,nelmt
+  num=g_num(:,i_elmt)
+  nodal_dmterm(num)=nodal_dmterm(num)+dmterm(:,i_elmt)
+enddo
+nodal_dmterm=nodal_dmterm/nvalency
+!call convolve_with_gaussian(ismpi,gnod,2.0_kreal,nodal_dmterm,nodal_dmtermc,errcode,errtag)
+call save_nodal_data(ptail,format_str,0,nnode,nodal_dmterm,'dm','dm',.false.)
+deallocate(nodal_dmterm,nodal_dmtermc)
 return
 end subroutine save_specfem_output
 !===============================================================================

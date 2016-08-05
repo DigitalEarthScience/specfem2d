@@ -179,6 +179,10 @@ if(savedata%disp)then
   write(11,'(a,i10,a,a,a,a,/)')'scalar per node: ',ts,' ','nu',' ',  &
   trim(file_head)//'_step'//wild_char(1:twidth)//trim(ptail)//'.nu'
 endif
+write(11,'(a,i10,a,a,a,a,/)')'scalar per node: ',ts,' ','dnu',' ',  &
+trim(file_head)//trim(ptail)//'.dnu'
+write(11,'(a,i10,a,a,a,a,/)')'scalar per node: ',ts,' ','dm',' ',  &
+trim(file_head)//trim(ptail)//'.dm'
 write(11,'(a)')'TIME'
 write(11,'(a,i10)')'time set:',ts
 write(11,'(a,i10)')'number of steps:',nt
