@@ -126,7 +126,7 @@ logical,parameter ::  solver_diagscale=.true.
 integer,parameter :: smart_solver=0  ! select appropriate solver automatically
 integer,parameter :: builtin_solver=1! select builtin conjugate gradient solver
 integer,parameter :: petsc_solver=2  ! select PETSC solver
-integer :: solver_type=petsc_solver !smart_solver
+integer :: solver_type=2!petsc_solver !smart_solver
 ! save options
 type savedata_options
   logical :: disp,stress,porep,psigma,maxtau,nsigma,scf,vmeps

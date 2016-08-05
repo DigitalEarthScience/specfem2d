@@ -35,7 +35,7 @@ real(kind=kreal) :: xigll(ngllx),wxgll(ngllx),etagll(nglly),wygll(nglly)
 ! compute gauss-lobatto-legendre quadrature information
 real(kind=kreal) :: gll_weights(ngll),gll_points(ndim,ngll),                   &
 dlagrange_gll(ndim,ngll,ngll)
-
+!real(kind=4) :: elmtjac(ngll,nelmt)
 ! get gll points and weights
 call zwgljd(xigll,wxgll,ngllx,jacobi_alpha,jacobi_beta)
 call zwgljd(etagll,wygll,nglly,jacobi_alpha,jacobi_beta)
@@ -44,6 +44,9 @@ call zwgljd(etagll,wygll,nglly,jacobi_alpha,jacobi_beta)
 call dshape_function_quad4(ngnode,ngllx,nglly,xigll,etagll,dshape_quad4)
 call gll_quadrature2d(ndim,ngllx,nglly,ngll,gll_points,gll_weights,        &
 lagrange_gll,dlagrange_gll)
+
+!open(100,file=trim(mat_path)//'proc000000_jacobian.bin',action='read',form='unformatted',status='old')
+!read(100)elmtjac 
 
 do i_elmt=1,nelmt
   num=g_num(:,i_elmt)
@@ -54,28 +57,78 @@ do i_elmt=1,nelmt
     ! compute Jacobian
     jac=matmul(dshape_quad4(:,:,i),coord)  
     detjac=determinant(jac)
+!    print*,detjac,elmtjac(i,i_elmt)
     if(detjac.le.ZERO)stop 'negative or zero jacobian!'
     call invert(jac)
     
     storederiv(:,:,i,i_elmt)=matmul(jac,dlagrange_gll(:,i,:))
 
     storejw(i,i_elmt)=detjac*gll_weights(i)
+!    storejw(i,i_elmt)=elmtjac(i,i_elmt)*gll_weights(i)
   end do ! i=1,ngll
 end do 
 
 end subroutine precompute_quadrature
 !===============================================================================
 
-subroutine stiffness_load_edgefield(gdof_elmt,interpfgll,nodalm0,storekmat,dprecon,bodyload)
+!subroutine stiffness_load_edgefield(gdof_elmt,interpfgll,nodalm0,storekmat,dprecon,bload)
+!use global
+!use math_constants,only:zero
+!use math_library,only:norm
+!implicit none
+!integer,intent(in) :: gdof_elmt(nedof,nelmt)
+!real(kind=kreal),intent(in) :: interpfgll(ngll,ngll)
+!real(kind=kreal),intent(in) :: nodalm0(1,nnode)
+!real(kind=kreal),intent(out) :: storekmat(nedof,nedof,nelmt)
+!real(kind=kreal),intent(out) :: dprecon(0:neq),bload(0:neq)
+!
+!integer :: egdof(nedof),num(ngll)
+!real(kind=kreal) :: dinterpf(ndim,ngll),interpf(ngll,1)
+!real(kind=kreal) :: kmat(nedof,nedof),kmat_gradnu(nedof,nedof),kmat_nu(nedof,nedof)
+!real(kind=kreal) :: eload(nedof),gradm(ndim,1),mgllmat(nedof,1)
+!real(kind=kreal) :: gradmsq
+!integer :: i_elmt,i
+!
+!! compute stiffness, body load, and precondioner
+!storekmat=zero
+!dprecon=zero
+!bload=zero
+!do i_elmt=1,nelmt
+!  num=g_num(:,i_elmt)
+!  egdof=gdof_elmt(:,i_elmt) 
+!  mgllmat(:,1)=nodalm0(1,num)
+!  kmat=zero; eload=zero
+!  do i=1,ngll
+!    interpf(:,1)=interpfgll(i,:)
+!    dinterpf=storederiv(:,:,i,i_elmt)
+!    gradm=matmul(dinterpf,mgllmat)
+!    gradmsq=norm(gradm(:,1))
+!  
+!    kmat_gradnu = eps_img*matmul(transpose(dinterpf),dinterpf)
+!    kmat_nu     = (0.25_kreal/eps_img+gam_img*gradmsq/eta_img)*matmul(interpf,transpose(interpf))
+!    kmat = kmat + (kmat_gradnu+kmat_nu)*storejw(i,i_elmt)
+!    eload=eload+(0.25_kreal/eps_img)*interpfgll(i,:)*storejw(i,i_elmt)
+!  end do ! i=1,ngll
+!  storekmat(:,:,i_elmt)=kmat
+!  do i=1,nedof
+!    dprecon(egdof(i))=dprecon(egdof(i))+kmat(i,i)
+!  end do
+!  bload(egdof)=bload(egdof)+eload
+!end do 
+!return
+!end subroutine stiffness_load_edgefield
+!!===============================================================================
+
+subroutine stiffness_load_edgefield(gdof_elmt,interpfgll,elmtm0,storekmat,dprecon,bload)
 use global
 use math_constants,only:zero
 use math_library,only:norm
 implicit none
 integer,intent(in) :: gdof_elmt(nedof,nelmt)
 real(kind=kreal),intent(in) :: interpfgll(ngll,ngll)
-real(kind=kreal),intent(in) :: nodalm0(1,nnode)
+real(kind=4),intent(in) :: elmtm0(ngll,nnode)
 real(kind=kreal),intent(out) :: storekmat(nedof,nedof,nelmt)
-real(kind=kreal),intent(out) :: dprecon(0:neq),bodyload(0:neq)
+real(kind=kreal),intent(out) :: dprecon(0:neq),bload(0:neq)
 
 integer :: egdof(nedof),num(ngll)
 real(kind=kreal) :: dinterpf(ndim,ngll),interpf(ngll,1)
@@ -87,11 +140,11 @@ integer :: i_elmt,i
 ! compute stiffness, body load, and precondioner
 storekmat=zero
 dprecon=zero
-bodyload=zero
+bload=zero
 do i_elmt=1,nelmt
   num=g_num(:,i_elmt)
   egdof=gdof_elmt(:,i_elmt) 
-  mgllmat(:,1)=nodalm0(1,num)
+  mgllmat(:,1)=elmtm0(:,i_elmt)
   kmat=zero; eload=zero
   do i=1,ngll
     interpf(:,1)=interpfgll(i,:)
@@ -108,13 +161,13 @@ do i_elmt=1,nelmt
   do i=1,nedof
     dprecon(egdof(i))=dprecon(egdof(i))+kmat(i,i)
   end do
-  bodyload(egdof)=bodyload(egdof)+eload
+  bload(egdof)=bload(egdof)+eload
 end do 
 return
 end subroutine stiffness_load_edgefield
 !===============================================================================
 
-subroutine stiffness_load_model(gdof_elmt,interpfgll,nodalg,nodalnu0,storekmat,dprecon,bodyload)
+subroutine stiffness_load_model(gdof_elmt,interpfgll,nodalg,nodalnu0,storekmat,dprecon,bload)
 use global
 use math_constants,only:zero
 use math_library,only:determinant,norm
@@ -124,7 +177,7 @@ integer,intent(in) :: gdof_elmt(nedof,nelmt)
 real(kind=kreal),intent(in) :: interpfgll(ngll,ngll)
 real(kind=kreal),intent(in) :: nodalg(1,nnode),nodalnu0(1,nnode)
 real(kind=kreal),intent(out) :: storekmat(nedof,nedof,nelmt)
-real(kind=kreal),intent(out) :: dprecon(0:neq),bodyload(0:neq)
+real(kind=kreal),intent(out) :: dprecon(0:neq),bload(0:neq)
 
 integer :: egdof(nedof),num(ngll),iups(ngll)
 real(kind=kreal) :: dinterpf(ndim,ngll),interpf(ngll,1)
@@ -138,7 +191,7 @@ integer :: i_elmt,i
 ! compute stiffness, body load, and precondioner
 storekmat=zero
 dprecon=zero
-bodyload=zero
+bload=zero
 do i_elmt=1,nelmt
   num=g_num(:,i_elmt)
   
@@ -161,20 +214,20 @@ do i_elmt=1,nelmt
   do i=1,nedof
     dprecon(egdof(i))=dprecon(egdof(i))+kmat(i,i)
   end do
-  bodyload(egdof)=bodyload(egdof)+eload
+  bload(egdof)=bload(egdof)+eload
 end do 
 return
 end subroutine stiffness_load_model
 !===============================================================================
 
-subroutine compute_bodyload_model(gdof_elmt,interpfgll,nodalg,bodyload)
+subroutine compute_bload_model(gdof_elmt,interpfgll,nodalg,bload)
 use global
 use math_constants,only:zero
 implicit none
 integer,intent(in) :: gdof_elmt(nedof,nelmt)
 real(kind=kreal),intent(in) :: interpfgll(ngll,ngll)
 real(kind=kreal),intent(in) :: nodalg(1,nnode)
-real(kind=kreal),intent(out) :: bodyload(0:neq)
+real(kind=kreal),intent(out) :: bload(0:neq)
 
 integer :: i_elmt,i
 integer :: egdof(nedof),num(ngll)
@@ -182,7 +235,7 @@ real(kind=kreal) :: eload(nedof),ggll(nedof)
 real(kind=kreal) :: interpf(ngll,1)
 
 ! compute stiffness, body load, and precondioner
-bodyload=zero
+bload=zero
 do i_elmt=1,nelmt
   num=g_num(:,i_elmt)
   egdof=gdof_elmt(:,i_elmt) 
@@ -193,13 +246,13 @@ do i_elmt=1,nelmt
      
     eload=eload+ggll(i)*interpfgll(i,:)*storejw(i,i_elmt)
   end do ! i=1,ngll
-  bodyload(egdof)=bodyload(egdof)+eload
+  bload(egdof)=bload(egdof)+eload
 end do 
 return
-end subroutine compute_bodyload_model
+end subroutine compute_bload_model
 !===============================================================================
 
-subroutine stiffness_load_modelconv(gdof_elmt,interpfgll,nodalg,nodalnu0,gsigma,nup,nodalgauss,storekmat,dprecon,bodyload,xmterm)
+subroutine stiffness_load_modelconv(gdof_elmt,interpfgll,nodalg,nodalnu0,gsigma,nup,nodalgauss,storekmat,dprecon,bload,xmterm)
 use global
 use math_constants,only:zero
 use math_library,only:determinant,norm,upinds_i2js
@@ -212,7 +265,7 @@ real(kind=kreal),intent(in) :: gsigma
 integer,intent(in) :: nup
 real(kind=kreal),intent(in) :: nodalgauss(0:) ! nodal data to be convolved
 real(kind=kreal),intent(out) :: storekmat(nedof,nedof,nelmt)
-real(kind=kreal),intent(out) :: dprecon(0:neq),bodyload(0:neq)
+real(kind=kreal),intent(out) :: dprecon(0:neq),bload(0:neq)
 logical,intent(in) :: xmterm ! if this is .true. kmat_m term will be discarded 
 ! because that term goes to the RHS.
 
@@ -229,7 +282,7 @@ cgfac=half/(pi*2.0_kreal*gsigma*gsigma)
 ! compute stiffness, body load, and precondioner
 storekmat=zero
 dprecon=zero
-bodyload=zero
+bload=zero
 do i_elmt=1,nelmt
   num=g_num(:,i_elmt)
   
@@ -257,7 +310,7 @@ do i_elmt=1,nelmt
   do i=1,nedof
     dprecon(egdof(i))=dprecon(egdof(i))+kmat(i,i)
   end do
-  bodyload(egdof)=bodyload(egdof)+eload
+  bload(egdof)=bload(egdof)+eload
 end do 
 return
 end subroutine stiffness_load_modelconv

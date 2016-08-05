@@ -68,7 +68,6 @@ integer,allocatable::gdof_elmt(:,:),num(:),nvalency(:) !num: g_num for
 
 real(kind=kreal),allocatable :: gload(:),bload(:),coord(:,:),      &
 dprecon(:),ndscale(:),x(:)
-real(kind=4),allocatable :: ggll(:,:)
 real(kind=kreal),allocatable :: storekmat(:,:,:)
 !bload: load computed on all nodes of the element
 !coord: coordinates of geometrical nodes
@@ -108,6 +107,7 @@ logical,allocatable :: submerged_node(:)
 
 real(kind=kreal),allocatable:: nodalg(:,:),nodalcg(:,:),nodalm0(:,:),nodalcm0(:,:),nodalccm0g(:,:),nodalnu0(:,:)
 real(kind=kreal),allocatable:: nodalm(:,:),nodalnu(:,:)
+real(kind=4),allocatable:: elmtg(:,:)
 real(kind=kreal) :: energy 
 logical :: discardm
 ! blurring
@@ -198,17 +198,17 @@ enddo
 ! model properties
 allocate(isnode(nnode))
 allocate(nodalg(nndof,nnode),nodalcg(nndof,nnode),nodalcm0(nndof,nnode),nodalccm0g(nndof,nnode))
+allocate(elmtg(ngll,nelmt))
 nodalg=ZERO
-
+elmtg=ZERO
 if(model_input.eq.1)then
   ! tomo model
   open(100,file=trim(mat_path)//trim(matfile),action='read',form='unformatted',status='old')
-  allocate(ggll(ngll,nelmt))
-  read(100)ggll
+  read(100)elmtg
   do i_elmt=1,nelmt
-    nodalg(1,g_num(:,i_elmt))=nodalg(1,g_num(:,i_elmt))+ggll(:,i_elmt)
+    nodalg(1,g_num(:,i_elmt))=nodalg(1,g_num(:,i_elmt))+elmtg(:,i_elmt)
   enddo
-  deallocate(ggll)
+  !deallocate(elmtg)
   nodalg(1,:)=nodalg(1,:)/nvalency
   close(100)
 else
@@ -319,7 +319,6 @@ else
                        shape3*grid_m(:,ig3)+shape4*grid_m(:,ig4)
       !nodalg(:,i_node)=shape1*norm(grid_m(:,ig1))+shape2*norm(grid_m(:,ig2))+       &
       !                shape3*norm(grid_m(:,ig3))+shape4*norm(grid_m(:,ig4))
-      
 
     enddo
   endif
@@ -328,11 +327,12 @@ if(nproc.gt.1)then
   call assemble_ghosts_nodal(myid,ngpart,maxngnode,nndof,nodalg,nodalg)
 endif
 call sync_process() 
-
+!nodalg=nodalg-minval(nodalg)
+!nodalg=nodalg-maxval(nodalg)
 call save_nodal_data(ptail,format_str,0,nnode,nodalg,'Original model','g',.false.)
 write(stdout,'(a)')'complete!'
 
-!gauss_sigma=4.0_kreal
+gauss_sigma=5.0_kreal
 !write(stdout,'(a)')'computing nodal distances...'
 !! number of upper trianglular elements
 !nup=nnode*(nnode-1)/2
@@ -349,7 +349,8 @@ write(stdout,'(a)')'complete!'
 !! blur original image
 !
 !write(stdout,'(a)')'blurring model...'
-!!call convolve_with_gaussian(ismpi,gnod,gauss_sigma,nodalg,nodalcg,errcode,errtag)
+!nodalcg=zero
+!call convolve_with_gaussian(ismpi,gnod,gauss_sigma,nodalg,nodalcg,errcode,errtag)
 !call convolve_with_gaussian_precomp(ismpi,gnod,nup,nodalgauss,nodalg,nodalcg,errcode,errtag)
 !if(nproc.gt.1)then
 !  call assemble_ghosts_nodal(myid,ngpart,maxngnode,nndof,nodalcg,nodalcg)
@@ -490,7 +491,8 @@ if(solver_type.eq.petsc_solver)then
   call petsc_create_solver()
   if(myid==1)print*,'petsc_initialize: SUCCESS!'
 endif
-
+print*,'ngll:',ngllx,nglly,ngll
+      
 discardm=.true. ! .true. for reconstruction (convolved m term), .false. for segementation
 print*,'-----------------------------------------------------------------------'
 time_step: do i_tstep=1,ntstep
@@ -501,7 +503,8 @@ time_step: do i_tstep=1,ntstep
   ! initialize variable
   nodalnu=zero
   ! compute stiffness, load, diagonal
-  call stiffness_load_edgefield(gdof_elmt,interpfgll,nodalm0,storekmat,dprecon,bload)
+  call stiffness_load_edgefield(gdof_elmt,interpfgll,elmtg,storekmat,dprecon,bload)
+  !call stiffness_load_edgefield(gdof_elmt,interpfgll,nodalm0,storekmat,dprecon,bload)
   call sync_process()
   print*,'stiffness comutation finished!'
   

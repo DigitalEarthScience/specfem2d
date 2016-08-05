@@ -76,6 +76,7 @@ subroutine save_specfem_output(gdof_elmt,interpfgll,nodalnu,nodalm)
 use global
 use math_constants,only:ONE,TWO,HALF,zero
 use math_library,only:norm
+use string_library,only:parse_file
 implicit none
 integer,intent(in) :: gdof_elmt(nedof,nelmt)
 real(kind=kreal),intent(in) :: interpfgll(ngll,ngll)
@@ -90,6 +91,9 @@ real(kind=kreal) :: divgradnu,gradnu(ndim,1),gradnugll(ndim,ngll),nugllmat(ngll,
 real(kind=kreal),allocatable :: dmterm(:,:),dnuterm(:,:)
 integer :: i_elmt,i
 
+character(len=250) :: matfile_head
+character(len=150) :: path
+character(len=20) :: ext
 ! factors
 TwoGam=two*gam_img
 TwoEtaEps=two*eta_img*eps_img
@@ -134,12 +138,13 @@ do i_elmt=1,nelmt
   end do ! i=1,ngll
 end do
 !print*,maxval(abs(dnuterm)),maxval(abs(dmterm)) 
-open(11,file=trim(out_path)//trim(matfile)//'.dnu',access='stream',            &
-form='unformatted',action='write',status='replace')
+call parse_file(matfile,path,matfile_head,ext)
+open(11,file=trim(out_path)//trim(matfile_head)//'_dnu.'//trim(ext),            &
+access='stream',form='unformatted',action='write',status='replace')
 write(11)dnuterm
 deallocate(dnuterm)
-open(11,file=trim(out_path)//trim(matfile)//'.dm',access='stream',            &
-form='unformatted',action='write',status='replace')
+open(11,file=trim(out_path)//trim(matfile_head)//'_dm.'//trim(ext),             &
+access='stream',form='unformatted',action='write',status='replace')
 write(11)dmterm
 deallocate(dmterm)
 return
