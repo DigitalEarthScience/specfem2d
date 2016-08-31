@@ -183,6 +183,8 @@ write(11,'(a,i10,a,a,a,a,/)')'scalar per node: ',ts,' ','dnu',' ',  &
 trim(file_head)//trim(ptail)//'.dnu'
 write(11,'(a,i10,a,a,a,a,/)')'scalar per node: ',ts,' ','dm',' ',  &
 trim(file_head)//trim(ptail)//'.dm'
+write(11,'(a,i10,a,a,a,a,/)')'scalar per node: ',ts,' ','wdm',' ',  &
+trim(file_head)//trim(ptail)//'.wdm'
 write(11,'(a)')'TIME'
 write(11,'(a,i10)')'time set:',ts
 write(11,'(a,i10)')'number of steps:',nt

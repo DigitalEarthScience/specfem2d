@@ -183,6 +183,28 @@ enddo
 nodal_dmterm=nodal_dmterm/nvalency
 !call convolve_with_gaussian(ismpi,gnod,2.0_kreal,nodal_dmterm,nodal_dmtermc,errcode,errtag)
 call save_nodal_data(ptail,format_str,0,nnode,nodal_dmterm,'dm','dm',.false.)
+
+! compute dm term in weak sense
+nodal_dmterm=zero
+do i_elmt=1,nelmt
+  num=g_num(:,i_elmt)
+  
+  mgllmat(:,1)=nodalm(1,num)
+  nugllmat(:,1)=nodalnu(1,num)
+
+  ! compute and store \nu^2 \grad m on gll points
+  do i=1,ngll
+    interpf(:,1)=interpfgll(i,:)
+    dinterpf=storederiv(:,:,i,i_elmt)
+    
+    gradm=matmul(dinterpf,mgllmat)
+    
+    nodal_dmterm(num(i))=nodal_dmterm(num(i))-TwoGam*nugllmat(i,1)*nugllmat(i,1)*dot_product(gradm(:,1),dinterpf(:,i))
+  end do ! i=1,ngll
+end do
+nodal_dmterm=nodal_dmterm/nvalency
+call save_nodal_data(ptail,format_str,0,nnode,nodal_dmterm,'wdm','wdm',.false.)
+
 deallocate(nodal_dmterm,nodal_dmtermc)
 return
 end subroutine save_specfem_output
