@@ -12,7 +12,7 @@ Created on Sun Nov 7 2010
 
 @author: Paul Cristini, Laboratoire de Mecanique et d'Acoustique, CNRS, Marseille, France
 """
-
+from __future__ import print_function
 from os import *
 import sys, shutil, string
 import os.path as op
@@ -51,8 +51,8 @@ def SemSave(rep):
             fic=GetValuePar('interfacesfile',lignes)
             shutil.copyfile(op.join(SEM,'DATA',fic),op.join(nvdir,fic))
     else:
-        print 'Unable to save, directory /'+rep+' already exists. Change name !'
-        
+        print('Unable to save, directory /'+rep+' already exists. Change name !')
+
 def GetValuePar(VAR,lignes):
     """ Return the values of a parameter present in the lines of a file"""
     for ligne in lignes:
@@ -62,6 +62,6 @@ def GetValuePar(VAR,lignes):
                 val=lsplit[2]
                 break
     return val
-    
+
 if __name__=='__main__':
     SemSave(sys.argv[1])

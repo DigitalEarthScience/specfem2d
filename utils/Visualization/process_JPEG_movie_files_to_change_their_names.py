@@ -3,13 +3,14 @@
 Created on Mon Oct 10 09:40:11 2011
 
 Add images with time step in file names if number was originally used or add
-images with number in file names if time step was originally used 
+images with number in file names if time step was originally used
 
 Usage : change directory to the the directory where the images were created and
 type "python PathTo/SPECFEM2D/UTILS/ProcessJpgFiles.py"
 
 @author: Cristini Paul, Laboratoire de Mecanique et d'Acoustique, CNRS, Marseille, France
 """
+from __future__ import print_function
 from os import listdir
 from shutil import copy
 from os.path import exists
@@ -31,7 +32,7 @@ def ConvertImage(ListFich):
             fname='img'+str(ct)+'.jpg'
             copy(filename,fname)
     return
-    
+
 def ConvertImage000(ListFich):
     nstep=LecDataBaseNstep()
     ct=0
@@ -45,11 +46,11 @@ def ConvertImage000(ListFich):
             fname='image%07i.jpg'% tstep
             copy(filename,fname)
     return
-    
+
 if __name__=='__main__':
      ListFich=sorted(listdir('.'))
      if not (exists('img1.jpg') & exists('image0000005.jpg')):
          if exists('img1.jpg'): ConvertImage000(ListFich)
          if  exists('image0000005.jpg'): ConvertImage(ListFich)
      else:
-        print 'Nothing to do !'
+        print('Nothing to do !')

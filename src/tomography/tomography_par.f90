@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -31,12 +31,11 @@
 !
 !========================================================================
 
-
 module tomography_par
 
-  use constants,only: CUSTOM_REAL,MAX_STRING_LEN, &
-    NGLLX,NGLLZ,IIN,IOUT, &
-    FOUR_THIRDS,GAUSSALPHA,GAUSSBETA
+  use constants, only: CUSTOM_REAL,MAX_STRING_LEN,NGLLX,NGLLZ, &
+    IIN,IOUT,FOUR_THIRDS,GAUSSALPHA,GAUSSBETA, &
+    myrank
 
   implicit none
 
@@ -53,8 +52,8 @@ module tomography_par
   ! model update length
   real(kind=CUSTOM_REAL) :: step_fac,step_length
 
-  ! mpi process
-  integer :: myrank,sizeprocs
+  ! MPI process
+  integer :: sizeprocs
 
 end module tomography_par
 

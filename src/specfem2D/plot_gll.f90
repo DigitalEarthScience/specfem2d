@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -35,9 +35,9 @@
 
 ! output the Gauss-Lobatto-Legendre mesh in a gnuplot file
 
-  use constants,only: IMAIN,NGLLX,NGLLZ
+  use constants, only: IMAIN,NGLLX,NGLLZ,OUTPUT_FILES
 
-  use specfem_par, only: knods,ibool,coorg,coord,ngnod,nspec
+  use specfem_par, only: knods,ibool,coorg,coord,NGNOD,nspec
 
   implicit none
 
@@ -61,17 +61,17 @@
 ! create non empty files for the case of 4-node elements
 
   name='macros1.gnu'
-  open(unit=30,file='OUTPUT_FILES/'//trim(name),status='unknown')
+  open(unit=30,file=trim(OUTPUT_FILES)//trim(name),status='unknown')
 
   name='macros2.gnu'
-  open(unit=31,file='OUTPUT_FILES/'//trim(name),status='unknown')
+  open(unit=31,file=trim(OUTPUT_FILES)//trim(name),status='unknown')
   write(31,"('')")
 
   name='gllmesh1.gnu'
-  open(unit=20,file='OUTPUT_FILES/'//trim(name),status='unknown')
+  open(unit=20,file=trim(OUTPUT_FILES)//trim(name),status='unknown')
 
   name='gllmesh2.gnu'
-  open(unit=21,file='OUTPUT_FILES/'//trim(name),status='unknown')
+  open(unit=21,file=trim(OUTPUT_FILES)//trim(name),status='unknown')
   write(21,"('')")
 
   do ispec = 1,nspec
@@ -135,14 +135,14 @@
 !----  plot the macrobloc mesh using Gnuplot
 !
   do ibloc = 1,nspec
-    do inode = 1,ngnod
+    do inode = 1,NGNOD
 
       xval(inode) = coorg(1,knods(inode,ibloc))
       zval(inode) = coorg(2,knods(inode,ibloc))
 
     enddo
 
-    if (ngnod == 4) then
+    if (NGNOD == 4) then
 !
 !----  4-node rectangular element
 !
@@ -220,7 +220,7 @@
 !
 !----  generate the command file for Gnuplot
 !
-  open(unit=20,file='OUTPUT_FILES/plotall_gll_mesh.gnu',status='unknown')
+  open(unit=20,file=trim(OUTPUT_FILES)//'plotall_gll_mesh.gnu',status='unknown')
   write(20,*) 'set term wxt'
   write(20,*) '# set term postscript landscape color solid "Helvetica" 22'
   write(20,*) '# set output "gll_mesh.ps"'
@@ -228,12 +228,12 @@
   write(20,*) 'set ylabel "Y"'
   write(20,*) 'set title "Gauss-Lobatto-Legendre Mesh"'
   write(20,*) 'set size ratio -1'
-  write(20,*) 'set loadpath "./OUTPUT_FILES"'
+  write(20,*) 'set loadpath "'//trim(OUTPUT_FILES)//'"'
   write(20,*) 'plot "gllmesh1.gnu" title '''' w l lc 2, "gllmesh2.gnu" title '''' w l lc 3'
   write(20,*) 'pause -1 "Hit any key to exit..."'
   close(20)
 
-  open(unit=20,file='OUTPUT_FILES/plotall_macro_mesh.gnu',status='unknown')
+  open(unit=20,file=trim(OUTPUT_FILES)//'plotall_macro_mesh.gnu',status='unknown')
   write(20,*) 'set term wxt'
   write(20,*) '# set term postscript landscape color solid "Helvetica" 22'
   write(20,*) '# set output "macro_mesh.ps"'
@@ -241,7 +241,7 @@
   write(20,*) 'set ylabel "Y"'
   write(20,*) 'set title "Spectral Element (Macrobloc) Mesh"'
   write(20,*) 'set size ratio -1'
-  write(20,*) 'set loadpath "./OUTPUT_FILES"'
+  write(20,*) 'set loadpath "'//trim(OUTPUT_FILES)//'"'
   write(20,*) 'plot "macros2.gnu" title '''' w l lc 2, "macros1.gnu" title '''' w l lc 3'
   write(20,*) 'pause -1 "Hit any key to exit..."'
   close(20)

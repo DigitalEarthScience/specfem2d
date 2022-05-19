@@ -4,11 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
-!               Pieyre Le Loher, pieyre DOT le-loher aT inria.fr
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -16,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -34,23 +33,25 @@
 
   subroutine initialize_simulation()
 
-#ifdef USE_MPI
-  use mpi
-#endif
-  use constants,only: IMAIN,ISTANDARD_OUTPUT,SIZE_REAL,NSTAGE
+  use constants, only: IMAIN,ISTANDARD_OUTPUT,SIZE_REAL,OUTPUT_FILES, &
+    NSTAGE_LDDRK,NSTAGE_RK4,NSTAGE_SYMPLECTIC
   use specfem_par
-  use specfem_par_movie,only: cutsnaps
 
   implicit none
 
+  include 'version.fh'
+
   ! local parameters
   integer :: ier
+  logical :: BROADCAST_AFTER_READ
 
 !***********************************************************************
 !
 !             i n i t i a l i z a t i o n    p h a s e
 !
 !***********************************************************************
+
+  OUTPUT_FILES = trim(OUTPUT_FILES) ! TODO OUTPUT_FILES!
 
   ! number of MPI processes
   call world_size(NPROC)
@@ -61,41 +62,51 @@
   call world_rank(myrank)
 
   ! check process setup
-  if (NPROC < 1) stop 'should have NPROC >= 1'
+  if (NPROC < 1) call stop_the_code('should have NPROC >= 1')
 
   ! checks rank to make sure that myrank is zero for serial version
-#ifdef USE_MPI
-    if (myrank >= NPROC) stop 'Error: invalid MPI rank'
+#ifdef WITH_MPI
+    if (myrank >= NPROC) call stop_the_code('Error: invalid MPI rank')
 #else
     ! serial version: checks rank is initialized
-    if (myrank /= 0) stop 'Error: process should have myrank zero for serial version'
+    if (myrank /= 0) call stop_the_code('Error: process should have myrank zero for serial version')
 #endif
 
   ! determine if we write to file instead of standard output
   if (myrank == 0 .and. IMAIN /= ISTANDARD_OUTPUT) then
     ! sets main output file name
     ! opens for simulation output
-    open(IMAIN,file='OUTPUT_FILES/'//'output_solver.txt',status='unknown',action='write',iostat=ier)
-    if (ier /= 0 ) call exit_MPI(myrank,'Error opening file OUTPUT_FILES/output_solver.txt')
+    open(IMAIN,file=trim(OUTPUT_FILES)//'output_solver.txt',status='unknown',action='write',iostat=ier)
+    if (ier /= 0 ) call exit_MPI(myrank,'Error opening file '//trim(OUTPUT_FILES)//'output_solver.txt')
   endif
 
   ! user output
   if (myrank == 0) then
     write(IMAIN,*)
-#ifdef USE_MPI
+
+#ifdef WITH_MPI
     write(IMAIN,*) '**********************************************'
     write(IMAIN,*) '**** Specfem 2-D Solver - MPI version     ****'
     write(IMAIN,*) '**********************************************'
-    write(IMAIN,*)
-    write(IMAIN,*) 'There are ',NPROC,' MPI processes'
-    write(IMAIN,*) 'Processes are numbered from 0 to ',NPROC-1
-    write(IMAIN,*)
-    write(IMAIN,*) 'There is a total of ',NPROC,' slices'
 #else
     write(IMAIN,*) '**********************************************'
     write(IMAIN,*) '**** Specfem 2-D Solver - serial version  ****'
     write(IMAIN,*) '**********************************************'
 #endif
+
+    write(IMAIN,*)
+    write(IMAIN,*) 'Running Git version of the code corresponding to ', git_commit_version
+    write(IMAIN,*) 'dating ', git_date_version
+    write(IMAIN,*)
+
+#ifdef WITH_MPI
+    write(IMAIN,*) 'There are ',NPROC,' MPI processes'
+    write(IMAIN,*) 'Processes are numbered from 0 to ',NPROC-1
+    write(IMAIN,*)
+    write(IMAIN,*) 'There is a total of ',NPROC,' slices'
+    write(IMAIN,*)
+#endif
+
     write(IMAIN,*)
     write(IMAIN,*) 'NDIM = ',NDIM
     write(IMAIN,*)
@@ -109,10 +120,19 @@
       write(IMAIN,*) 'using double precision for the calculations'
     endif
     write(IMAIN,*)
-    write(IMAIN,*) 'smallest and largest possible floating-point numbers are: ',&
+    write(IMAIN,*) 'smallest and largest possible floating-point numbers are: ', &
                    tiny(1._CUSTOM_REAL),huge(1._CUSTOM_REAL)
+    write(IMAIN,*)
     call flush_IMAIN()
   endif
+
+  ! read the parameter file
+  BROADCAST_AFTER_READ = .true.
+  call read_parameter_file(0,BROADCAST_AFTER_READ)
+
+  ! reads in source descriptions
+  ! note: we will need a source frequency for outputting poroelastic velocities when reading the mesh databases
+  call read_source_file(NSOURCES,BROADCAST_AFTER_READ)
 
   ! starts reading in Database file (header info, simulation flags, number of elements
   call read_mesh_for_init()
@@ -127,7 +147,8 @@
   ! allocates mesh
   ! local to global indexing
   allocate(ibool(NGLLX,NGLLZ,nspec),stat=ier)
-  if (ier /= 0) stop 'Error allocating ibool array'
+  if (ier /= 0) call stop_the_code('Error allocating ibool array')
+  ibool(:,:,:) = 0
 
   ! mesh arrays
   allocate(xix(NGLLX,NGLLZ,nspec), &
@@ -135,24 +156,27 @@
            gammax(NGLLX,NGLLZ,nspec), &
            gammaz(NGLLX,NGLLZ,nspec), &
            jacobian(NGLLX,NGLLZ,nspec),stat=ier)
-  if (ier /= 0) stop 'Error allocating mesh arrays for databases'
+  if (ier /= 0) call stop_the_code('Error allocating mesh arrays for databases')
+  xix(:,:,:) = 0.0_CUSTOM_REAL
+  xiz(:,:,:) = 0.0_CUSTOM_REAL
+  gammax(:,:,:) = 0.0_CUSTOM_REAL
+  gammaz(:,:,:) = 0.0_CUSTOM_REAL
+  jacobian(:,:,:) = 0.0_CUSTOM_REAL
 
   ! domain flags
   allocate(ispec_is_elastic(nspec), &
            ispec_is_acoustic(nspec), &
-           ispec_is_gravitoacoustic(nspec), &
            ispec_is_poroelastic(nspec),stat=ier)
-  if (ier /= 0) stop 'Error allocating domain flag arrays'
+  if (ier /= 0) call stop_the_code('Error allocating domain flag arrays')
 
   ispec_is_elastic(:) = .false.
   ispec_is_acoustic(:) = .false.
-  ispec_is_gravitoacoustic(:) = .false.
   ispec_is_poroelastic(:) = .false.
 
   ! element property flags
   allocate(ispec_is_anisotropic(nspec), &
            ispec_is_PML(nspec), stat=ier)
-  if (ier /= 0) stop 'Error allocating element property flag arrays'
+  if (ier /= 0) call stop_the_code('Error allocating element property flag arrays')
 
   ispec_is_anisotropic(:) = .false.
   ispec_is_PML(:) = .false.
@@ -164,16 +188,22 @@
 
   ! time scheme
   ! defines number of stages of chosen time stepping scheme
-  if (time_stepping_scheme == 1) then
+  select case (time_stepping_scheme)
+  case (1)
     ! Newmark
     stage_time_scheme = 1
-  else if (time_stepping_scheme == 2) then
+  case (2)
     ! LDDRK
-    stage_time_scheme = NSTAGE ! 6
-  else if (time_stepping_scheme == 3) then
+    stage_time_scheme = NSTAGE_LDDRK ! 6
+  case (3)
     ! Runge-Kutta
-    stage_time_scheme = 4
-  endif
+    stage_time_scheme = NSTAGE_RK4   ! 4
+  case (4)
+    ! symplectic PEFRL
+    stage_time_scheme = NSTAGE_SYMPLECTIC ! 4
+  case default
+    call stop_the_code('Error invalid time stepping scheme value')
+  end select
 
   ! converts percentage
   cutsnaps = cutsnaps / 100.d0
@@ -185,32 +215,6 @@
     assign_external_model = .true.
   endif
 
-  ! make sure NSTEP is a multiple of subsamp_seismos
-  ! if not, increase it a little bit, to the next multiple
-  if (mod(NSTEP,subsamp_seismos) /= 0) then
-    NSTEP = (NSTEP/subsamp_seismos + 1)*subsamp_seismos
-
-    ! user output
-    if (myrank == 0) then
-      write(IMAIN,*)
-      write(IMAIN,*) 'NSTEP is not a multiple of subsamp_seismos'
-      write(IMAIN,*) 'thus increasing it automatically to the next multiple, which is ',NSTEP
-      write(IMAIN,*)
-    endif
-  endif
-
-  ! output seismograms at least once at the end of the simulation
-  NSTEP_BETWEEN_OUTPUT_SEISMOS = min(NSTEP,NSTEP_BETWEEN_OUTPUT_SEISMOS)
-
-  ! make sure NSTEP_BETWEEN_OUTPUT_SEISMOS is a multiple of subsamp_seismos
-  if (mod(NSTEP_BETWEEN_OUTPUT_SEISMOS,subsamp_seismos) /= 0) then
-    if (myrank == 0) then
-      write(IMAIN,*) 'Invalid number of NSTEP_BETWEEN_OUTPUT_SEISMOS = ',NSTEP_BETWEEN_OUTPUT_SEISMOS
-      write(IMAIN,*) 'Must be a multiple of subsamp_seismos = ',subsamp_seismos
-    endif
-    stop 'Error: NSTEP_BETWEEN_OUTPUT_SEISMOS must be a multiple of subsamp_seismos'
-  endif
-
   end subroutine initialize_simulation
 
 
@@ -220,17 +224,19 @@
 
   subroutine initialize_simulation_check()
 
-  use constants,only: IMAIN,ISTANDARD_OUTPUT,USE_ENFORCE_FIELDS
+  use constants, only: IMAIN,ISTANDARD_OUTPUT,USE_ENFORCE_FIELDS
   use specfem_par
   use specfem_par_movie
 
   implicit none
 
+  integer :: i_sig
+
   ! synchronizes processes
   call synchronize_all()
 
   ! number of processes
-  if (nproc_read_from_database < 1) stop 'should have nproc_read_from_database >= 1'
+  if (nproc_read_from_database < 1) call stop_the_code('should have nproc_read_from_database >= 1')
 
   ! check that the code is running with the requested nb of processes
   if (NPROC /= nproc_read_from_database) then
@@ -249,36 +255,73 @@
     call exit_MPI(myrank,'wrong number of MPI processes, must always have NPROC == nproc_read_from_database')
   endif
 
-  ! time scheme
-  if (SIMULATION_TYPE == 3 .and.(time_stepping_scheme == 2 .or. time_stepping_scheme == 3)) &
-    stop 'RK and LDDRK time scheme not supported for adjoint inversion'
+  ! time scheme (non-)feature checks
+  select case(time_stepping_scheme)
+  case (1)
+    ! full support
+    continue
 
-  ! standard RK scheme
-  if (time_stepping_scheme == 3) then
-    if (NPROC > 1) &
-      stop 'MPI support for standard Runge-Kutta scheme is not implemented yet'
+  case (2)
+    ! LDDRK
+    if (SIMULATION_TYPE == 3) &
+      call stop_the_code('Time scheme not supported for adjoint inversion')
+    if (USE_ENFORCE_FIELDS) &
+      call stop_the_code('USE_ENFORCE_FIELDS is not supported yet for time scheme LDDRK')
+    if (GPU_MODE) &
+      call stop_the_code('GPU_MODE is not supported yet for time scheme LDDRK')
+    if (NO_BACKWARD_RECONSTRUCTION) &
+      call stop_the_code('NO_BACKWARD_RECONSTRUCTION is not supported yet for time scheme LDDRK')
 
+  case (3)
+    ! RK4
     if (PML_BOUNDARY_CONDITIONS) &
-      stop 'PML boundary conditions not implemented with standard Runge Kutta scheme yet'
-  endif
+      call stop_the_code('PML boundary conditions not implemented with standard Runge-Kutta scheme yet')
+    if (SIMULATION_TYPE == 3) &
+      call stop_the_code('Time scheme not supported for adjoint inversion')
+    if (USE_ENFORCE_FIELDS) &
+      call stop_the_code('USE_ENFORCE_FIELDS is not supported yet for time scheme RK4')
+    if (GPU_MODE) &
+      call stop_the_code('GPU_MODE is not supported yet for time scheme RK4')
+    if (NO_BACKWARD_RECONSTRUCTION) &
+      call stop_the_code('NO_BACKWARD_RECONSTRUCTION is not supported yet for time scheme RK4')
+
+  case (4)
+    ! symplectic PEFRL
+    if (PML_BOUNDARY_CONDITIONS) &
+      call stop_the_code('PML boundary conditions not implemented with symplectic time scheme yet')
+    if (SIMULATION_TYPE == 3) &
+      call stop_the_code('Time scheme not supported for adjoint inversion')
+    if (USE_ENFORCE_FIELDS) &
+      call stop_the_code('USE_ENFORCE_FIELDS is not supported yet for time scheme symplectic')
+    if (GPU_MODE) &
+      call stop_the_code('GPU_MODE is not supported yet for time scheme symplectic')
+    if (NO_BACKWARD_RECONSTRUCTION) &
+      call stop_the_code('NO_BACKWARD_RECONSTRUCTION is not supported yet for time scheme symplectic')
+
+  case default
+    call stop_the_code('Invalid time scheme, please choose between 1 == Newmark, 2 == LDDRK, 3 == RK4, 4 == symplectic')
+  end select
 
   ! Bielak parameter setup
   if (add_Bielak_conditions .and. .not. initialfield) &
-    stop 'need to have an initial field to add Bielak plane wave conditions'
+    call stop_the_code('need to have an initial field to add Bielak plane wave conditions')
 
   ! seismogram output
-  if (seismotype < 1 .or. seismotype > 6) &
-    stop 'seismotype should be 1(=displ), 2(=veloc), 3(=accel), 4(=pressure), 5(=curl of displ) or 6(=the fluid potential)'
+  do i_sig = 1,NSIGTYPE
+    if (seismotypeVec(i_sig) < 1 .or. seismotypeVec(i_sig) > 6) & ! TODO
+      call stop_the_code( &
+      'seismotype should be 1(=displ), 2(=veloc), 3(=accel), 4(=pressure), 5(=curl of displ) or 6(=the fluid potential)')
+  enddo
 
-  if (SU_FORMAT .and. .not. save_binary_seismograms_single) &
-     stop 'SU_FORMAT seismograms are single precision and thus require save_binary_seismograms_single set to .true.'
+  if (SAVE_FORWARD .and. (NSIGTYPE > 1)) &
+    call stop_the_code('Only one one signal type (seismotype) can be computed when using SAVE_FORWARD')
 
-  if (SAVE_FORWARD .and. (seismotype /= 1 .and. seismotype /= 6)) then
+  if (SAVE_FORWARD .and. seismotypeVec(1) /= 1 .and. seismotypeVec(1) /= 6) then
     ! user warning
     if (myrank == 0) then
       write(IMAIN,*)
       write(IMAIN,*) '***** WARNING *****'
-      write(IMAIN,*) 'SAVE_FORWARD simulation: uses seismotype = ',seismotype
+      write(IMAIN,*) 'SAVE_FORWARD simulation: uses seismotype = ',seismotypeVec(1)
       write(IMAIN,*) '  Note that seismograms usually must be in displacement/potential for (poro)elastic/acoustic domains'
       write(IMAIN,*) '  and seismotype should be 1 (elastic/poroelastic adjoint source) or 6 (acoustic adjoint source)'
       write(IMAIN,*) '*******************'
@@ -289,41 +332,31 @@
   endif
 
   ! image type
-  if (imagetype_postscript < 1 .or. imagetype_postscript > 4) stop 'Wrong type for PostScript snapshots'
+  if (imagetype_postscript < 1 .or. imagetype_postscript > 4) call stop_the_code('Wrong type for PostScript snapshots')
 
   ! checks attenuation setting
   if (SIMULATION_TYPE == 1 .and. SAVE_FORWARD .and. (ATTENUATION_PORO_FLUID_PART)) then
     print *, '*************** Error ***************'
-    stop 'Anisotropy & Viscous damping are not presently implemented for adjoint calculations'
+    call stop_the_code('Anisotropy & Viscous damping are not presently implemented for adjoint calculations')
   endif
 
-  if (SIMULATION_TYPE == 1 .and. SAVE_FORWARD .and. ATTENUATION_PORO_FLUID_PART .and. (.not. UNDO_ATTENUATION)) then
+  if (SIMULATION_TYPE == 1 .and. SAVE_FORWARD .and. &
+      (ATTENUATION_VISCOELASTIC .or. ATTENUATION_VISCOACOUSTIC) &
+      .and. (.not. UNDO_ATTENUATION_AND_OR_PML .and. .not. NO_BACKWARD_RECONSTRUCTION )) then
     print *, '*************** Error ***************'
-    stop 'attenuation is only implemented for adjoint calculations with UNDO_ATTENUATION'
+    call stop_the_code(&
+    'attenuation is only implemented for adjoint calculations with UNDO_ATTENUATION_AND_OR_PML or NO_BACKWARD_RECONSTRUCTION')
   endif
 
-  if (.not. P_SV .and. (ATTENUATION_VISCOELASTIC_SOLID)) then
+  if ((.not. P_SV) .and. ATTENUATION_VISCOELASTIC) then
     print *, '*************** WARNING ***************'
     print *, 'Attenuation and anisotropy are not implemented for surface (membrane) waves calculation'
     print *, '*************** WARNING ***************'
-    stop 'Please set P_SV flag to .true. for simulations with attenuation and anisotropy'
+    call stop_the_code('Please set P_SV flag to .true. for simulations with attenuation and anisotropy')
   endif
-
-  ! enforcing wavefield at global degrees-of-freedom
-#ifdef FORCE_VECTORIZATION
-  if (myrank == 0) then
-    write(IMAIN,*)
-    write(IMAIN,*) '    using array vectorization: FORCE_VECTORIZATION'
-    write(IMAIN,*)
-  endif
-  ! safety stop
-  if (USE_ENFORCE_FIELDS) &
-    stop 'USE_ENFORCE_FIELDS is not supported yet when using FORCE_VECTORIZATION'
-#endif
 
   if (USE_ENFORCE_FIELDS .and. SIMULATION_TYPE /= 1) &
-    stop 'USE_ENFORCE_FIELDS is not supported yet for adjoint/kernel simulations'
-
+    call stop_the_code('USE_ENFORCE_FIELDS is not supported yet for adjoint/kernel simulations')
 
   ! synchronizes processes
   call synchronize_all()
@@ -338,7 +371,7 @@
 
 ! initialization for GPU cards
 
-  use constants,only: IMAIN
+  use constants, only: IMAIN
   use specfem_par
 
   implicit none
@@ -354,12 +387,10 @@
   endif
 
   ! check for GPU runs
-  if (NGLLX /= 5 .or. NGLLZ /= 5 ) &
-    stop 'GPU mode can only be used if NGLLX == NGLLZ == 5'
+  if (NGLLX /= NGLLZ) &
+    call stop_the_code('GPU mode can only be used if NGLLX == NGLLZ ')
   if (CUSTOM_REAL /= 4 ) &
-    stop 'GPU mode runs only with CUSTOM_REAL == 4'
-  if (UNDO_ATTENUATION) &
-    stop 'for undo_attenuation, GPU_MODE is not supported'
+    call stop_the_code('GPU mode runs only with CUSTOM_REAL == 4')
 
   ! initializes GPU and outputs info to files for all processes
   call initialize_cuda_device(myrank,ncuda_devices)
@@ -368,13 +399,8 @@
   call synchronize_all()
 
   ! collects min/max of local devices found for statistics
-#ifdef USE_MPI
   call min_all_i(ncuda_devices,ncuda_devices_min)
   call max_all_i(ncuda_devices,ncuda_devices_max)
-#else
-  ncuda_devices_min = ncuda_devices
-  ncuda_devices_max = ncuda_devices
-#endif
 
   if (myrank == 0) then
     write(IMAIN,*) "GPU number of devices per node: min =",ncuda_devices_min

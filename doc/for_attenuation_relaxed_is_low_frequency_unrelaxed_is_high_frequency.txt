@@ -1,1 +1,0 @@
-for attenuation, the relaxed state is at low frequency and the unrelaxed state is at high frequency.

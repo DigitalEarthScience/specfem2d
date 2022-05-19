@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -80,6 +80,8 @@
   implicit none
 
   ! time marching
+  ! Newmark
+  if (.not. time_stepping_scheme == 1) return
 
   ! acoustic domain
   if (ACOUSTIC_SIMULATION) call update_displ_acoustic_forward()
@@ -103,6 +105,8 @@
   implicit none
 
   ! time marching
+  ! Newmark
+  if (.not. time_stepping_scheme == 1) return
 
   ! acoustic domain
   if (ACOUSTIC_SIMULATION) call update_displ_acoustic_backward()
@@ -127,34 +131,30 @@
 
   implicit none
 
-#ifdef FORCE_VECTORIZATION
-  integer :: i
-#endif
+  logical :: compute_b_wavefield
 
   ! checks if anything to do in this slice
   if (.not. any_acoustic) return
+  ! Newmark
+  if (.not. time_stepping_scheme == 1) return
 
   if (.not. GPU_MODE) then
-
-    if (time_stepping_scheme == 1) then
-      call update_displacement_newmark_acoustic(deltat,deltatover2,deltatsquareover2,&
-                                                potential_dot_dot_acoustic,potential_dot_acoustic,&
-                                                potential_acoustic, &
-                                                PML_BOUNDARY_CONDITIONS,potential_acoustic_old)
-    else
-#ifdef FORCE_VECTORIZATION
-      do i = 1,nglob_acoustic
-        potential_dot_dot_acoustic(i) = 0._CUSTOM_REAL
-      enddo
-#else
-      potential_dot_dot_acoustic(:) = 0._CUSTOM_REAL
-#endif
-    endif
-
+    ! on CPU
+    call update_displacement_newmark_acoustic(deltat,deltatover2,deltatsquareover2, &
+                                              potential_dot_dot_acoustic,potential_dot_acoustic, &
+                                              potential_acoustic, &
+                                              PML_BOUNDARY_CONDITIONS,potential_acoustic_old)
   else
+    ! GPU
+    ! for the UNDO_ATTENUATION_AND_OR_PML case, this routine is not used
+    if (NO_BACKWARD_RECONSTRUCTION) then
+      compute_b_wavefield = .false.
+    else
+      compute_b_wavefield = .true.
+    endif
     ! on GPU
     ! handles both forward and backward
-    call update_displacement_newmark_GPU_acoustic()
+    call update_displacement_newmark_GPU_acoustic(compute_b_wavefield)
   endif
 
   end subroutine update_displ_acoustic_forward
@@ -171,33 +171,21 @@
 
   implicit none
 
-#ifdef FORCE_VECTORIZATION
-  integer :: i
-#endif
-
   ! checks
   if (SIMULATION_TYPE /= 3) return
 
   ! checks if anything to do in this slice
   if (.not. any_acoustic) return
+  ! Newmark
+  if (.not. time_stepping_scheme == 1) return
 
   if (.not. GPU_MODE) then
     !Since we do not do anything in PML region in case of backward simulation, thus we set
     !PML_BOUNDARY_CONDITIONS = .false.
-    if (time_stepping_scheme == 1) then
-      call update_displacement_newmark_acoustic(b_deltat,b_deltatover2,b_deltatsquareover2,&
-                                                b_potential_dot_dot_acoustic,b_potential_dot_acoustic,&
-                                                b_potential_acoustic, &
-                                                .false.,b_potential_acoustic_old)
-    else
-#ifdef FORCE_VECTORIZATION
-      do i = 1,nglob_acoustic
-        b_potential_dot_dot_acoustic(i) = 0._CUSTOM_REAL
-      enddo
-#else
-      b_potential_dot_dot_acoustic(:) = 0._CUSTOM_REAL
-#endif
-    endif
+    call update_displacement_newmark_acoustic(b_deltat,b_deltatover2,b_deltatsquareover2, &
+                                              b_potential_dot_dot_acoustic,b_potential_dot_acoustic, &
+                                              b_potential_acoustic, &
+                                              .false.,b_potential_acoustic_old)
   else
     ! on GPU
     ! already done in forward call...
@@ -218,47 +206,27 @@
 
   implicit none
 
-#ifdef FORCE_VECTORIZATION
-  integer :: i
-#endif
-
   ! checks if anything to do in this slice
   if (.not. any_elastic) return
+  ! Newmark
+  if (.not. time_stepping_scheme == 1) return
 
   if (.not. GPU_MODE) then
-
     ! for coupling with adjoint wavefield, stores old (at time t_n) wavefield
-    if (SIMULATION_TYPE == 3) then
-      if (time_stepping_scheme == 1) then
-        ! handles adjoint runs coupling between adjoint potential and adjoint elastic wavefield
-        ! adjoint definition: \partial_t^2 \bfs^\dagger = - \frac{1}{\rho} \bfnabla \phi^\dagger
-        if (coupled_acoustic_elastic) then
-#ifdef FORCE_VECTORIZATION
-          do i = 1,NDIM*nglob_elastic
-            accel_elastic_adj_coupling(i,1) = - accel_elastic(i,1)
-          enddo
-#else
-          accel_elastic_adj_coupling(:,:) = - accel_elastic(:,:)
-#endif
-        endif
-      endif
-    endif
+    ! not needed anymore, taking care of by re-ordering domain updates
+    !if (SIMULATION_TYPE == 3) then
+    !  ! handles adjoint runs coupling between adjoint potential and adjoint elastic wavefield
+    !  ! adjoint definition: \partial_t^2 \bfs^\dagger = - \frac{1}{\rho} \bfnabla \phi^\dagger
+    !  if (coupled_acoustic_elastic) then
+    !    accel_elastic_adj_coupling(:,:) = - accel_elastic(:,:)
+    !  endif
+    !endif
 
     ! updates elastic wavefields
-    if (time_stepping_scheme == 1) then
-      call update_displacement_newmark_elastic(deltat,deltatover2,deltatsquareover2,&
-                                               accel_elastic,veloc_elastic,&
-                                               displ_elastic,displ_elastic_old,&
-                                               PML_BOUNDARY_CONDITIONS)
-    else
-#ifdef FORCE_VECTORIZATION
-      do i = 1,NDIM*nglob_elastic
-        accel_elastic(i,1) = 0._CUSTOM_REAL
-      enddo
-#else
-      accel_elastic(:,:) = 0._CUSTOM_REAL
-#endif
-    endif
+    call update_displacement_newmark_elastic(deltat,deltatover2,deltatsquareover2, &
+                                             accel_elastic,veloc_elastic, &
+                                             displ_elastic,displ_elastic_old, &
+                                             PML_BOUNDARY_CONDITIONS)
   else
     ! on GPU
     ! handles both forward and backward
@@ -279,33 +247,21 @@
 
   implicit none
 
-#ifdef FORCE_VECTORIZATION
-  integer :: i
-#endif
-
   ! checks
   if (SIMULATION_TYPE /= 3) return
 
   ! checks if anything to do in this slice
   if (.not. any_elastic) return
+  ! Newmark
+  if (.not. time_stepping_scheme == 1) return
 
   if (.not. GPU_MODE) then
     !Since we do not do anything in PML region in case of backward simulation, thus we set
     !PML_BOUNDARY_CONDITIONS = .false.
-    if (time_stepping_scheme == 1) then
-      call update_displacement_newmark_elastic(b_deltat,b_deltatover2,b_deltatsquareover2,&
-                                               b_accel_elastic,b_veloc_elastic,&
-                                               b_displ_elastic,b_displ_elastic_old,&
-                                               .false.)
-    else
-#ifdef FORCE_VECTORIZATION
-      do i = 1,NDIM*nglob_elastic
-        b_accel_elastic(i,1) = 0._CUSTOM_REAL
-      enddo
-#else
-      b_accel_elastic(:,:) = 0._CUSTOM_REAL
-#endif
-    endif
+    call update_displacement_newmark_elastic(b_deltat,b_deltatover2,b_deltatsquareover2, &
+                                             b_accel_elastic,b_veloc_elastic, &
+                                             b_displ_elastic,b_displ_elastic_old, &
+                                             .false.)
   else
     ! on GPU
     ! already done in forward call..
@@ -328,29 +284,24 @@
 
   ! checks if anything to do in this slice
   if (.not. any_poroelastic) return
+  ! Newmark
+  if (.not. time_stepping_scheme == 1) return
 
   if (.not. GPU_MODE) then
-
     ! for coupling with adjoint wavefield, stores old (at time t_n) wavefield
-    if (SIMULATION_TYPE == 3) then
-      if (time_stepping_scheme == 1) then
-        ! handles adjoint runs coupling between adjoint potential and adjoint elastic wavefield
-        ! adjoint definition: \partial_t^2 \bfs^\dagger = - \frac{1}{\rho} \bfnabla \phi^\dagger
-        accels_poroelastic_adj_coupling(:,:) = - accels_poroelastic(:,:)
-        accelw_poroelastic_adj_coupling(:,:) = - accelw_poroelastic(:,:)
-      endif
-    endif
+    ! not needed anymore, taking care of by re-ordering domain updates
+    !if (SIMULATION_TYPE == 3) then
+    !  ! handles adjoint runs coupling between adjoint potential and adjoint elastic wavefield
+    !  ! adjoint definition: \partial_t^2 \bfs^\dagger = - \frac{1}{\rho} \bfnabla \phi^\dagger
+    !  accels_poroelastic_adj_coupling(:,:) = - accels_poroelastic(:,:)
+    !  accelw_poroelastic_adj_coupling(:,:) = - accelw_poroelastic(:,:)
+    !endif
 
     ! updates poroelastic wavefields
-    if (time_stepping_scheme == 1) then
-      call update_displacement_newmark_poroelastic(deltat,deltatover2,deltatsquareover2,&
-                                                   accels_poroelastic,velocs_poroelastic,&
-                                                   displs_poroelastic,accelw_poroelastic,&
-                                                   velocw_poroelastic,displw_poroelastic)
-    else
-      accels_poroelastic(:,:) = 0._CUSTOM_REAL
-      accelw_poroelastic(:,:) = 0._CUSTOM_REAL
-    endif
+    call update_displacement_newmark_poroelastic(deltat,deltatover2,deltatsquareover2, &
+                                                 accels_poroelastic,velocs_poroelastic, &
+                                                 displs_poroelastic,accelw_poroelastic, &
+                                                 velocw_poroelastic,displw_poroelastic)
   else
     ! on GPU
     ! safety stop
@@ -377,19 +328,15 @@
 
   ! checks if anything to do in this slice
   if (.not. any_poroelastic) return
+  ! Newmark
+  if (.not. time_stepping_scheme == 1) return
 
   if (.not. GPU_MODE) then
-
-    if (time_stepping_scheme == 1) then
-      !PML not implemented for poroelastic simulation
-      call update_displacement_newmark_poroelastic(b_deltat,b_deltatover2,b_deltatsquareover2,&
-                                                   b_accels_poroelastic,b_velocs_poroelastic,&
-                                                   b_displs_poroelastic,b_accelw_poroelastic,&
-                                                   b_velocw_poroelastic,b_displw_poroelastic)
-    else
-      b_accels_poroelastic(:,:) = 0._CUSTOM_REAL
-      b_accelw_poroelastic(:,:) = 0._CUSTOM_REAL
-    endif
+    !PML not implemented for poroelastic simulation
+    call update_displacement_newmark_poroelastic(b_deltat,b_deltatover2,b_deltatsquareover2, &
+                                                 b_accels_poroelastic,b_velocs_poroelastic, &
+                                                 b_displs_poroelastic,b_accelw_poroelastic, &
+                                                 b_velocw_poroelastic,b_displw_poroelastic)
   else
     ! on GPU
     ! safety stop
@@ -405,54 +352,52 @@
 
   subroutine update_displacement_newmark_acoustic(deltat,deltatover2,deltatsquareover2, &
                                                   potential_dot_dot_acoustic,potential_dot_acoustic, &
-                                                  potential_acoustic, &
-                                                  PML_BOUNDARY_CONDITIONS,potential_acoustic_old)
+                                                  potential_acoustic,PML_BOUNDARY_CONDITIONS,potential_acoustic_old)
 
-  use specfem_par, only : nglob_acoustic,CUSTOM_REAL
+  use constants, only: TWO,USE_ENFORCE_FIELDS,USE_A_STRONG_FORMULATION_FOR_E1
+
+  use specfem_par, only: nglob_acoustic,CUSTOM_REAL,ATTENUATION_VISCOACOUSTIC,iglob_is_forced,acoustic_iglob_is_forced,it
 
   implicit none
 
-  double precision,intent(in) :: deltat,deltatover2,deltatsquareover2
-  real(kind=CUSTOM_REAL), dimension(nglob_acoustic),intent(inout) :: potential_acoustic,potential_dot_acoustic,&
+  real(kind=CUSTOM_REAL),intent(in) :: deltat,deltatover2,deltatsquareover2
+  real(kind=CUSTOM_REAL), dimension(nglob_acoustic),intent(inout) :: potential_acoustic,potential_dot_acoustic, &
                                                                      potential_dot_dot_acoustic
 
   logical,intent(in) :: PML_BOUNDARY_CONDITIONS
   real(kind=CUSTOM_REAL), dimension(nglob_acoustic),intent(inout) :: potential_acoustic_old
 
   ! local parameters
-#ifdef FORCE_VECTORIZATION
-  integer :: i
-#endif
+  integer :: iglob
 
   ! PML simulations
-  if (PML_BOUNDARY_CONDITIONS) then
-
-    ! note: todo - for elastic, there is an additional factor 1/TWO to the default deltasquareover2 for the acceleration term
-    !       find explanations where?
-#ifdef FORCE_VECTORIZATION
-    do i = 1,nglob_acoustic
-      potential_acoustic_old(i) = potential_acoustic(i) + deltatsquareover2 * potential_dot_dot_acoustic(i)
-    enddo
-#else
-    potential_acoustic_old(:) = potential_acoustic(:) + deltatsquareover2 * potential_dot_dot_acoustic(:)
-#endif
-
+  if (PML_BOUNDARY_CONDITIONS .or. (ATTENUATION_VISCOACOUSTIC .and. .not. USE_A_STRONG_FORMULATION_FOR_E1)) then
+    ! note: TODO - for elastic, there is an additional factor 1/TWO to the default deltasquareover2 for the acceleration term
+    !       find explanations where? Zhinan Xie probably wrote that and should thus know the answer
+    !! DK DK oct 2017: thus adding a factor of TWO here as well
+    ! potential_acoustic_old(:) = potential_acoustic(:) + deltatsquareover2 * potential_dot_dot_acoustic(:)
+    potential_acoustic_old(:) = potential_acoustic(:) + deltatsquareover2/TWO * potential_dot_dot_acoustic(:)
   endif ! PML_BOUNDARY_CONDITIONS
 
-
-#ifdef FORCE_VECTORIZATION
-  do i = 1,nglob_acoustic
-    potential_acoustic(i) = potential_acoustic(i) + deltat * potential_dot_acoustic(i) &
-                                                  + deltatsquareover2 * potential_dot_dot_acoustic(i)
-    potential_dot_acoustic(i) = potential_dot_acoustic(i) + deltatover2 * potential_dot_dot_acoustic(i)
-    potential_dot_dot_acoustic(i) = 0._CUSTOM_REAL
-  enddo
-#else
-  potential_acoustic(:) = potential_acoustic(:) + deltat * potential_dot_acoustic &
-                                                + deltatsquareover2 * potential_dot_dot_acoustic(:)
-  potential_dot_acoustic(:) = potential_dot_acoustic(:) + deltatover2 * potential_dot_dot_acoustic(:)
-  potential_dot_dot_acoustic(:) = 0._CUSTOM_REAL
-#endif
+  if (USE_ENFORCE_FIELDS) then
+    do iglob = 1,nglob_acoustic
+      if (iglob_is_forced(iglob)) then
+        if (acoustic_iglob_is_forced(iglob)) call enforce_fields_acoustic(iglob,it)
+      else
+        ! big loop over all the global points (not elements) in the mesh to update
+        ! the potential_acoustic and potential_dot_acoustic vectors and clear the potential_dot_dot_acoustic vector
+        potential_acoustic(iglob) = potential_acoustic(iglob) + deltat * potential_dot_acoustic(iglob) &
+                                                      + deltatsquareover2 * potential_dot_dot_acoustic(iglob)
+        potential_dot_acoustic(iglob) = potential_dot_acoustic(iglob) + deltatover2 * potential_dot_dot_acoustic(iglob)
+        potential_dot_dot_acoustic(iglob) = 0._CUSTOM_REAL
+      endif
+    enddo
+  else
+    potential_acoustic(:) = potential_acoustic(:) + deltat * potential_dot_acoustic &
+                                                  + deltatsquareover2 * potential_dot_dot_acoustic(:)
+    potential_dot_acoustic(:) = potential_dot_acoustic(:) + deltatover2 * potential_dot_dot_acoustic(:)
+    potential_dot_dot_acoustic(:) = 0._CUSTOM_REAL
+  endif
 
   end subroutine update_displacement_newmark_acoustic
 
@@ -460,65 +405,37 @@
 !------------------------------------------------------------------------------------------------
 !
 
-  subroutine update_displacement_newmark_elastic(deltat,deltatover2,deltatsquareover2,&
-                                                 accel_elastic,veloc_elastic,&
-                                                 displ_elastic,displ_elastic_old,&
+  subroutine update_displacement_newmark_elastic(deltat,deltatover2,deltatsquareover2, &
+                                                 accel_elastic,veloc_elastic, &
+                                                 displ_elastic,displ_elastic_old, &
                                                  PML_BOUNDARY_CONDITIONS)
 
-  use constants,only: CUSTOM_REAL,NDIM,TWO
+  use constants, only: CUSTOM_REAL,NDIM,TWO,USE_ENFORCE_FIELDS
 
-  use specfem_par,only : nglob_elastic,ATTENUATION_VISCOELASTIC_SOLID
-
-#ifndef FORCE_VECTORIZATION
-  use constants,only: USE_ENFORCE_FIELDS
-  use specfem_par,only: iglob_is_forced,it
-#endif
+  use specfem_par, only: nglob_elastic,ATTENUATION_VISCOELASTIC,iglob_is_forced,elastic_iglob_is_forced,it
 
   implicit none
 
-  double precision,intent(in) :: deltat,deltatover2,deltatsquareover2
+  real(kind=CUSTOM_REAL),intent(in) :: deltat,deltatover2,deltatsquareover2
   real(kind=CUSTOM_REAL), dimension(NDIM,nglob_elastic),intent(inout) :: accel_elastic,veloc_elastic, &
                                                                       displ_elastic,displ_elastic_old
 
   logical,intent(in) :: PML_BOUNDARY_CONDITIONS
 
   ! local parameters
-#ifdef FORCE_VECTORIZATION
-  integer :: i
-#else
   integer :: iglob
-#endif
 
   ! attenuation/PML simulations
-  if (PML_BOUNDARY_CONDITIONS .or. ATTENUATION_VISCOELASTIC_SOLID) then
-
-    ! note: todo - there is an additional factor 1/TWO to the default deltasquareover2 for the acceleration term
-    !       find explanations where?
-#ifdef FORCE_VECTORIZATION
-    do i = 1,NDIM*nglob_elastic
-      displ_elastic_old(i,1) = displ_elastic(i,1) + deltatsquareover2/TWO * accel_elastic(i,1)
-    enddo
-#else
+  if (PML_BOUNDARY_CONDITIONS .or. ATTENUATION_VISCOELASTIC) then
+    ! note: TODO - there is an additional factor 1/TWO to the default deltasquareover2 for the acceleration term
+    !       find explanations where? Zhinan Xie probably wrote that and should thus know the answer
     displ_elastic_old(:,:) = displ_elastic(:,:) + deltatsquareover2/TWO * accel_elastic(:,:)
-#endif
-
   endif ! PML
 
-#ifdef FORCE_VECTORIZATION
-  !! DK DK this allows for full vectorization by using a trick to see the 2D array as a 1D array
-  !! DK DK whose dimension is the product of the two dimensions, the second dimension being equal to 1
-  ! vectorized updates
-  do i = 1,NDIM*nglob_elastic
-    displ_elastic(i,1) = displ_elastic(i,1) + deltat * veloc_elastic(i,1) + deltatsquareover2 * accel_elastic(i,1)
-    veloc_elastic(i,1) = veloc_elastic(i,1) + deltatover2 * accel_elastic(i,1)
-    accel_elastic(i,1) = 0._CUSTOM_REAL
-  enddo
-#else
-  ! non-vectorized updates
   if (USE_ENFORCE_FIELDS) then
     do iglob = 1,nglob_elastic
       if (iglob_is_forced(iglob)) then
-        call enforce_fields(iglob,it)
+        if (elastic_iglob_is_forced(iglob)) call enforce_fields(iglob,it) ! TODO TODO TODO
       else
         ! big loop over all the global points (not elements) in the mesh to update
         ! the displacement and velocity vectors and clear the acceleration vector
@@ -534,68 +451,45 @@
     accel_elastic(:,:) = 0._CUSTOM_REAL
   endif
 
-#endif
-
   end subroutine update_displacement_newmark_elastic
 
 !
 !------------------------------------------------------------------------------------------------
 !
 
-  subroutine update_displacement_newmark_poroelastic(deltat,deltatover2,deltatsquareover2,&
-                                                     accels_poroelastic,velocs_poroelastic,&
-                                                     displs_poroelastic,accelw_poroelastic,&
+  subroutine update_displacement_newmark_poroelastic(deltat,deltatover2,deltatsquareover2, &
+                                                     accels_poroelastic,velocs_poroelastic, &
+                                                     displs_poroelastic,accelw_poroelastic, &
                                                      velocw_poroelastic,displw_poroelastic)
 
-  use constants,only: CUSTOM_REAL,NDIM
+  use constants, only: CUSTOM_REAL,NDIM
 
-  use specfem_par, only : nglob_poroelastic,PML_BOUNDARY_CONDITIONS
+  use specfem_par, only: nglob_poroelastic,PML_BOUNDARY_CONDITIONS
 
   implicit none
 
-  double precision,intent(in) :: deltat,deltatover2,deltatsquareover2
+  real(kind=CUSTOM_REAL),intent(in) :: deltat,deltatover2,deltatsquareover2
   real(kind=CUSTOM_REAL), dimension(NDIM,nglob_poroelastic),intent(inout) :: &
     accels_poroelastic,velocs_poroelastic,displs_poroelastic, &
     accelw_poroelastic,velocw_poroelastic,displw_poroelastic
 
   ! local parameters
-#ifdef FORCE_VECTORIZATION
-  integer :: i
-#endif
 
   ! safety check
   !PML did not implemented for poroelastic simulation
-  if (PML_BOUNDARY_CONDITIONS) stop 'Updating displacement for PML on poroelastic domain not implemented yet'
+  if (PML_BOUNDARY_CONDITIONS) call stop_the_code('Updating displacement for PML on poroelastic domain not implemented yet')
 
-  !for the solid
-#ifdef FORCE_VECTORIZATION
-  do i = 1, NDIM * nglob_poroelastic
-    displs_poroelastic(i,1) = displs_poroelastic(i,1) + deltat*velocs_poroelastic(i,1) &
-                              + deltatsquareover2*accels_poroelastic(i,1)
-    velocs_poroelastic(i,1) = velocs_poroelastic(i,1) + deltatover2*accels_poroelastic(i,1)
-    accels_poroelastic(i,1) = 0._CUSTOM_REAL
-  enddo
-#else
+  ! for the solid
   displs_poroelastic(:,:) = displs_poroelastic(:,:) + deltat*velocs_poroelastic(:,:) &
                             + deltatsquareover2*accels_poroelastic(:,:)
   velocs_poroelastic(:,:) = velocs_poroelastic(:,:) + deltatover2*accels_poroelastic(:,:)
   accels_poroelastic(:,:) = 0._CUSTOM_REAL
-#endif
 
-  !for the fluid
-#ifdef FORCE_VECTORIZATION
-  do i = 1, NDIM * nglob_poroelastic
-    displw_poroelastic(i,1) = displw_poroelastic(i,1) + deltat*velocw_poroelastic(i,1) &
-                              + deltatsquareover2*accelw_poroelastic(i,1)
-    velocw_poroelastic(i,1) = velocw_poroelastic(i,1) + deltatover2*accelw_poroelastic(i,1)
-    accelw_poroelastic(i,1) = 0._CUSTOM_REAL
-  enddo
-#else
+  ! for the fluid
   displw_poroelastic(:,:) = displw_poroelastic(:,:) + deltat*velocw_poroelastic(:,:) &
                             + deltatsquareover2*accelw_poroelastic(:,:)
   velocw_poroelastic(:,:) = velocw_poroelastic(:,:) + deltatover2*accelw_poroelastic(:,:)
   accelw_poroelastic(:,:) = 0._CUSTOM_REAL
-#endif
 
   end subroutine update_displacement_newmark_poroelastic
 
@@ -603,57 +497,23 @@
 !------------------------------------------------------------------------------------------------
 !
 
-  subroutine update_displacement_newmark_GPU()
+  subroutine update_displacement_newmark_GPU_acoustic(compute_b_wavefield)
 
-  use specfem_par, only : any_acoustic,any_elastic,any_poroelastic,myrank
+  use specfem_par, only: UNDO_ATTENUATION_AND_OR_PML, &
+    deltat,deltatover2,deltatsquareover2, &
+    b_deltat,b_deltatover2,b_deltatsquareover2
 
-  implicit none
-
-  ! update displacement using finite-difference time scheme (Newmark)
-
-  if (any_acoustic) then
-    ! wavefields on GPU
-    call update_displacement_newmark_GPU_acoustic()
-  endif
-
-  if (any_elastic) then
-    ! wavefields on GPU
-    call update_displacement_newmark_GPU_elastic()
-  endif
-
-  if (any_poroelastic) then
-    ! safety stop
-    call exit_MPI(myrank,'poroelastic time marching scheme on GPU not implemented yet...')
-  endif
-
-  end subroutine update_displacement_newmark_GPU
-
-!
-!------------------------------------------------------------------------------------------------
-!
-
-  subroutine update_displacement_newmark_GPU_acoustic()
-
-  use specfem_par, only : SIMULATION_TYPE,PML_BOUNDARY_CONDITIONS,myrank
-
-  use specfem_par_gpu, only : Mesh_pointer,deltatf,deltatover2f,deltatsquareover2f,b_deltatf,b_deltatover2f,&
-    b_deltatsquareover2f
+  use specfem_par_gpu, only: Mesh_pointer
 
   implicit none
 
-  ! update displacement using finite-difference time scheme (Newmark)
+  logical :: compute_b_wavefield
 
-  ! wavefields on GPU
-  ! check
-  if (SIMULATION_TYPE == 3) then
-    if (PML_BOUNDARY_CONDITIONS) then
-      call exit_MPI(myrank,'acoustic time marching scheme with PML_CONDITIONS on GPU not implemented yet...')
-    endif
-  endif
+  ! update displacement using finite-difference time scheme (Newmark)
 
   ! updates acoustic potentials
-  call update_displacement_ac_cuda(Mesh_pointer,deltatf,deltatsquareover2f,deltatover2f,&
-                                   b_deltatf,b_deltatsquareover2f,b_deltatover2f)
+  call update_displacement_ac_cuda(Mesh_pointer,deltat,deltatsquareover2,deltatover2,b_deltat, &
+                                   b_deltatsquareover2,b_deltatover2,compute_b_wavefield,UNDO_ATTENUATION_AND_OR_PML)
 
   end subroutine update_displacement_newmark_GPU_acoustic
 
@@ -663,10 +523,11 @@
 
   subroutine update_displacement_newmark_GPU_elastic()
 
-  use specfem_par, only : SIMULATION_TYPE,PML_BOUNDARY_CONDITIONS,myrank
+  use specfem_par, only: SIMULATION_TYPE,PML_BOUNDARY_CONDITIONS,myrank, &
+    deltat,deltatover2,deltatsquareover2, &
+    b_deltat,b_deltatover2,b_deltatsquareover2
 
-  use specfem_par_gpu, only : Mesh_pointer,deltatf,deltatover2f,deltatsquareover2f,b_deltatf,b_deltatover2f,&
-    b_deltatsquareover2f
+  use specfem_par_gpu, only: Mesh_pointer
 
   implicit none
 
@@ -682,8 +543,8 @@
 
   ! updates elastic displacement and velocity
   ! Includes SIM_TYPE 1 & 3 (for noise tomography)
-  call update_displacement_cuda(Mesh_pointer,deltatf,deltatsquareover2f,deltatover2f,&
-                                b_deltatf,b_deltatsquareover2f,b_deltatover2f)
+  call update_displacement_cuda(Mesh_pointer,deltat,deltatsquareover2,deltatover2, &
+                                b_deltat,b_deltatsquareover2,b_deltatover2)
 
   end subroutine update_displacement_newmark_GPU_elastic
 
@@ -704,7 +565,7 @@
 
 ! updates velocity vector (corrector)
 
-  use constants,only: USE_ENFORCE_FIELDS
+  use constants, only: USE_ENFORCE_FIELDS
   use specfem_par
 
   implicit none
@@ -717,7 +578,7 @@
   if (USE_ENFORCE_FIELDS) then
     do iglob = 1,nglob_elastic
       ! big loop over all the global points (not elements) in the mesh to update velocity vector (corrector).
-      if (.not. iglob_is_forced(iglob)) then
+      if (.not. elastic_iglob_is_forced(iglob)) then
         veloc_elastic(:,iglob) = veloc_elastic(:,iglob) + deltatover2 * accel_elastic(:,iglob)
       endif
     enddo
@@ -735,7 +596,7 @@
 
 ! updates backward velocity vector (corrector)
 
-  use constants,only: USE_ENFORCE_FIELDS
+  use constants, only: USE_ENFORCE_FIELDS
   use specfem_par
 
   implicit none
@@ -748,7 +609,7 @@
   if (USE_ENFORCE_FIELDS) then
     do iglob = 1,nglob_elastic
       ! big loop over all the global points (not elements) in the mesh to update velocity vector (corrector).
-      if (.not. iglob_is_forced(iglob)) then
+      if (.not. elastic_iglob_is_forced(iglob)) then
         b_veloc_elastic(:,iglob) = b_veloc_elastic(:,iglob) + b_deltatover2 * b_accel_elastic(:,iglob)
       endif
     enddo
@@ -771,18 +632,32 @@
 
 ! updates velocity potential (corrector)
 
+  use constants, only: USE_ENFORCE_FIELDS
   use specfem_par
 
   implicit none
 
+  ! local parameters
+  integer :: iglob
+
   !! DK DK this should be vectorized
-  potential_dot_acoustic(:) = potential_dot_acoustic(:) + deltatover2 * potential_dot_dot_acoustic(:)
+  if (USE_ENFORCE_FIELDS) then
+    do iglob = 1,nglob_acoustic
+      ! big loop over all the global points (not elements) in the acoustic mesh to update velocity vector (corrector).
+      if (.not. acoustic_iglob_is_forced(iglob)) then
+        potential_dot_acoustic(iglob) = potential_dot_acoustic(iglob) + deltatover2 * potential_dot_dot_acoustic(iglob)
+      endif
+    enddo
+  else
+    potential_dot_acoustic(:) = potential_dot_acoustic(:) + deltatover2 * potential_dot_dot_acoustic(:)
+  endif
 
   ! update the potential field (use a new array here) for coupling terms
-  if (SIMULATION_TYPE == 3) then
-    potential_acoustic_adj_coupling(:) = potential_acoustic(:) + deltat * potential_dot_acoustic(:) + &
-                                         deltatsquareover2 * potential_dot_dot_acoustic(:)
-  endif
+  ! not needed anymore, taking care of by re-ordering domain updates
+  !if (SIMULATION_TYPE == 3) then
+  !  potential_acoustic_adj_coupling(:) = potential_acoustic(:) + deltat * potential_dot_acoustic(:) + &
+  !                                       deltatsquareover2 * potential_dot_dot_acoustic(:)
+  !endif
 
   end subroutine update_veloc_acoustic_Newmark
 
@@ -793,10 +668,26 @@
 
 ! updates velocity potential (corrector)
 
+  use constants, only: USE_ENFORCE_FIELDS
   use specfem_par
 
+  implicit none
+
+  ! local parameters
+  integer :: iglob
+
   !! DK DK this should be vectorized
-  b_potential_dot_acoustic(:) = b_potential_dot_acoustic(:) + b_deltatover2 * b_potential_dot_dot_acoustic(:)
+  if (USE_ENFORCE_FIELDS) then
+    do iglob = 1,nglob_acoustic
+      ! big loop over all the global points (not elements) in the acoustic mesh to update velocity vector (corrector).
+      if (.not. acoustic_iglob_is_forced(iglob)) then
+        b_potential_dot_acoustic(iglob) = b_potential_dot_acoustic(iglob) + b_deltatover2 * b_potential_dot_dot_acoustic(iglob)
+      endif
+    enddo
+  else
+    !! DK DK this should be vectorized
+    b_potential_dot_acoustic(:) = b_potential_dot_acoustic(:) + b_deltatover2 * b_potential_dot_dot_acoustic(:)
+  endif
 
   end subroutine update_veloc_acoustic_Newmark_backward
 
@@ -830,6 +721,8 @@
 ! updates velocity (corrector)
 
   use specfem_par
+
+  implicit none
 
   ! solid
   b_velocs_poroelastic(:,:) = b_velocs_poroelastic(:,:) + b_deltatover2 * b_accels_poroelastic(:,:)

@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -52,13 +52,12 @@
   endif
 
   ! shape arrays
-  allocate(shape2D(ngnod,NGLLX,NGLLZ), &
-           dershape2D(NDIM,ngnod,NGLLX,NGLLZ),stat=ier)
-  if (ier /= 0) stop 'Error allocating shape arrays'
+  allocate(shape2D(NGNOD,NGLLX,NGLLZ),dershape2D(NDIM,NGNOD,NGLLX,NGLLZ),stat=ier)
+  if (ier /= 0) call stop_the_code('Error allocating shape arrays')
 
   do j = 1,NGLLZ
     do i = 1,NGLLX
-      call define_shape_functions(shape2D(:,i,j),dershape2D(:,:,i,j),xigll(i),zigll(j),ngnod)
+      call define_shape_functions(shape2D(:,i,j),dershape2D(:,:,i,j),xigll(i),zigll(j),NGNOD)
     enddo
   enddo
 
@@ -72,7 +71,7 @@
            hgammas(NGLLZ), &
            hpgammar(NGLLZ), &
            hpgammas(NGLLZ),stat=ier)
-  if (ier /= 0) stop 'error allocating arrays for interpolators'
+  if (ier /= 0) call stop_the_code('error allocating arrays for interpolators')
 
   end subroutine setup_GLL_points
 

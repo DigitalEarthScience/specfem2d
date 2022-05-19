@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -31,28 +31,26 @@
 !
 !========================================================================
 
-
   subroutine compute_forces_viscoelastic_backward(b_accel_elastic,b_displ_elastic,b_displ_elastic_old, &
                                                   e1,e11,e13,iphase)
 
   ! compute forces for the elastic elements
-  use constants,only: CUSTOM_REAL,NGLLX,NGLLZ,NGLJ,NDIM, &
-    CONVOLUTION_MEMORY_VARIABLES, &
-    ONE,TWO,PI,TINYVAL, &
-    IEDGE1,IEDGE2,IEDGE3,IEDGE4,ALPHA_LDDRK,BETA_LDDRK
+  use constants, only: CUSTOM_REAL,NGLLX,NGLLZ,NGLJ,NDIM, &
+    ONE,TWO,PI,TINYVAL,ALPHA_LDDRK,BETA_LDDRK,ALPHA_RK4,BETA_RK4
 
-  use specfem_par, only: nglob,nspec,assign_external_model,P_SV, &
-                         ATTENUATION_VISCOELASTIC_SOLID,nspec_ATT,N_SLS, &
-                         ibool,kmato,ispec_is_elastic, &
-                         poroelastcoef,xix,xiz,gammax,gammaz, &
-                         jacobian,vpext,vsext,rhoext,c11ext,c13ext,c15ext,c33ext,c35ext,c55ext,c12ext,c23ext,c25ext,&
-                         ispec_is_anisotropic,anisotropy, &
+  use specfem_par, only: nglob,nspec,P_SV, &
+                         ATTENUATION_VISCOELASTIC,nspec_ATT,N_SLS, &
+                         ibool,ispec_is_elastic, &
+                         xix,xiz,gammax,gammaz, &
+                         jacobian,rho_vpstore,mustore,rhostore, &
+                         c11store,c13store,c15store,c33store,c35store,c55store,c12store,c23store,c25store, &
+                         ispec_is_anisotropic, &
                          e1_LDDRK,e11_LDDRK,e13_LDDRK, &
                          e1_initial_rk,e11_initial_rk,e13_initial_rk,e1_force_RK, e11_force_RK, e13_force_RK, &
                          hprime_xx,hprimewgll_xx,hprime_zz,hprimewgll_zz,wxgll,wzgll, &
                          AXISYM,is_on_the_axis,hprimeBar_xx,hprimeBarwglj_xx,xiglj,wxglj, &
                          inv_tau_sigma_nu1,phi_nu1,inv_tau_sigma_nu2,phi_nu2,N_SLS, &
-                         deltat,coord, &
+                         DT,deltat,coord, &
                          time_stepping_scheme,i_stage,ispec_is_acoustic
 
   ! overlapping communication
@@ -102,7 +100,7 @@
 
   ! material properties of the elastic medium
   real(kind=CUSTOM_REAL) :: mul_unrelaxed_elastic,lambdal_unrelaxed_elastic, &
-    lambdalplusmul_unrelaxed_elastic,lambdaplus2mu_unrelaxed_elastic,cpl,csl,rhol
+    lambdalplusmul_unrelaxed_elastic,lambdaplus2mu_unrelaxed_elastic,cpl,rhol
 
   ! for attenuation
   real(kind=CUSTOM_REAL) :: phinu1,phinu2,theta_n_u,theta_nsub1_u
@@ -119,7 +117,7 @@
   !!!update memory variable in viscoelastic simulation
   if (iphase == 1) then
 
-  if (ATTENUATION_VISCOELASTIC_SOLID) then
+  if (ATTENUATION_VISCOELASTIC) then
 
     ! compute Grad(b_displ_elastic) at time step n for attenuation
     call compute_gradient_attenuation(b_displ_elastic,dux_dxl_n,duz_dxl_n, &
@@ -152,19 +150,20 @@
             phinu2 = phi_nu2(i,j,ispec,i_sls)
             tauinvnu2 = inv_tau_sigma_nu2(i,j,ispec,i_sls)
 
-            ! update e1, e11, e13 in convolution formation with modified recursive convolution scheme on basis of
+            ! update e1, e11, e13 in convolution formulation with modified recursive convolution scheme on basis of
             ! second-order accurate convolution term calculation from equation (21) of
             ! Shumin Wang, Robert Lee, and Fernando L. Teixeira,
-            ! Anisotropic-Medium PML for Vector FETD With Modified Basis Functions,
+            ! Anisotropic-medium PML for vector FETD with modified basis functions,
             ! IEEE Transactions on Antennas and Propagation, vol. 54, no. 1, (2006)
-            if (time_stepping_scheme == 1) then
+            select case(time_stepping_scheme)
+            case (1)
               ! Newmark
-              call compute_coef_convolution(tauinvnu1,deltat,coef0,coef1,coef2)
+              call compute_coef_convolution(tauinvnu1,DT,coef0,coef1,coef2)
 
               e1(i,j,ispec,i_sls) = coef0 * e1(i,j,ispec,i_sls) + &
                                     phinu1 * (coef1 * theta_n_u + coef2 * theta_nsub1_u)
 
-              call compute_coef_convolution(tauinvnu2,deltat,coef0,coef1,coef2)
+              call compute_coef_convolution(tauinvnu2,DT,coef0,coef1,coef2)
 
               e11(i,j,ispec,i_sls) = coef0 * e11(i,j,ispec,i_sls) + &
                                      phinu2 * (coef1 * (dux_dxl_n(i,j,ispec)-theta_n_u/TWO) + &
@@ -175,7 +174,7 @@
                                                coef2 * (dux_dzl_nsub1(i,j,ispec) + duz_dxl_nsub1(i,j,ispec)))
 
             ! update e1, e11, e13 in ADE formation with fourth-order LDDRK scheme
-            else if (time_stepping_scheme == 2) then
+            case (2)
               ! LDDRK
               e1_LDDRK(i,j,ispec,i_sls) = ALPHA_LDDRK(i_stage) * e1_LDDRK(i,j,ispec,i_sls) + &
                                           deltat * (theta_n_u * phinu1 - e1(i,j,ispec,i_sls) * tauinvnu1)
@@ -192,54 +191,70 @@
               e13(i,j,ispec,i_sls) = e13(i,j,ispec,i_sls)+BETA_LDDRK(i_stage) * e13_LDDRK(i,j,ispec,i_sls)
 
             ! update e1, e11, e13 in ADE formation with classical fourth-order Runge-Kutta scheme
-            else if (time_stepping_scheme == 3) then
+            case (3)
               ! RK
-              e1_force_RK(i,j,ispec,i_sls,i_stage) = deltat * (theta_n_u * phinu1 - e1(i,j,ispec,i_sls) * tauinvnu1)
+              ! initial field
+              if (i_stage == 1) e1_initial_rk(i,j,ispec,i_sls) = e1(i,j,ispec,i_sls)
 
-              if (i_stage==1 .or. i_stage==2 .or. i_stage==3) then
-                if (i_stage == 1)weight_rk = 0.5_CUSTOM_REAL
-                if (i_stage == 2)weight_rk = 0.5_CUSTOM_REAL
-                if (i_stage == 3)weight_rk = 1._CUSTOM_REAL
+              ! intermediate fields
+              e1_force_RK(i,j,ispec,i_sls,i_stage) = theta_n_u * phinu1 - e1(i,j,ispec,i_sls) * tauinvnu1
 
-                if (i_stage==1) e1_initial_rk(i,j,ispec,i_sls) = e1(i,j,ispec,i_sls)
+              if (i_stage == 1 .or. i_stage == 2 .or. i_stage == 3) then
+                ! note: this prepare the fields for the next stage, i.e., used at istage+1
+                weight_rk = ALPHA_RK4(i_stage+1) * deltat
                 e1(i,j,ispec,i_sls) = e1_initial_rk(i,j,ispec,i_sls) + weight_rk * e1_force_RK(i,j,ispec,i_sls,i_stage)
-              else if (i_stage==4) then
-                e1(i,j,ispec,i_sls) = e1_initial_rk(i,j,ispec,i_sls) + 1._CUSTOM_REAL / 6._CUSTOM_REAL * &
-                                      (e1_force_RK(i,j,ispec,i_sls,1) + 2._CUSTOM_REAL * e1_force_RK(i,j,ispec,i_sls,2) + &
-                                       2._CUSTOM_REAL * e1_force_RK(i,j,ispec,i_sls,3) + e1_force_RK(i,j,ispec,i_sls,4))
+              else if (i_stage == 4) then
+                ! final update
+                e1(i,j,ispec,i_sls) = e1_initial_rk(i,j,ispec,i_sls) + deltat * &
+                                      (BETA_RK4(1) * e1_force_RK(i,j,ispec,i_sls,1) + &
+                                       BETA_RK4(2) * e1_force_RK(i,j,ispec,i_sls,2) + &
+                                       BETA_RK4(3) * e1_force_RK(i,j,ispec,i_sls,3) + &
+                                       BETA_RK4(4) * e1_force_RK(i,j,ispec,i_sls,4))
               endif
 
-              e11_force_RK(i,j,ispec,i_sls,i_stage) = deltat * ((dux_dxl_n(i,j,ispec)-theta_n_u/TWO) * phinu2 - &
-                                                                 e11(i,j,ispec,i_sls) * tauinvnu2)
+              ! initial field
+              if (i_stage == 1) e11_initial_rk(i,j,ispec,i_sls) = e11(i,j,ispec,i_sls)
 
-              if (i_stage==1 .or. i_stage==2 .or. i_stage==3) then
-                if (i_stage == 1)weight_rk = 0.5_CUSTOM_REAL
-                if (i_stage == 2)weight_rk = 0.5_CUSTOM_REAL
-                if (i_stage == 3)weight_rk = 1._CUSTOM_REAL
+              ! intermediate fields
+              e11_force_RK(i,j,ispec,i_sls,i_stage) = (dux_dxl_n(i,j,ispec)-theta_n_u/TWO) * phinu2 - &
+                                                          e11(i,j,ispec,i_sls) * tauinvnu2
 
-                if (i_stage==1) e11_initial_rk(i,j,ispec,i_sls) = e11(i,j,ispec,i_sls)
+              if (i_stage == 1 .or. i_stage == 2 .or. i_stage == 3) then
+                ! note: this prepare the fields for the next stage, i.e., used at istage+1
+                weight_rk = ALPHA_RK4(i_stage+1) * deltat
                 e11(i,j,ispec,i_sls) = e11_initial_rk(i,j,ispec,i_sls) + weight_rk * e11_force_RK(i,j,ispec,i_sls,i_stage)
-              else if (i_stage==4) then
-                e11(i,j,ispec,i_sls) = e11_initial_rk(i,j,ispec,i_sls) + 1._CUSTOM_REAL / 6._CUSTOM_REAL * &
-                                       (e11_force_RK(i,j,ispec,i_sls,1) + 2._CUSTOM_REAL * e11_force_RK(i,j,ispec,i_sls,2) + &
-                                        2._CUSTOM_REAL * e11_force_RK(i,j,ispec,i_sls,3) + e11_force_RK(i,j,ispec,i_sls,4))
+              else if (i_stage == 4) then
+                ! final update
+                e11(i,j,ispec,i_sls) = e11_initial_rk(i,j,ispec,i_sls) + deltat * &
+                                       (BETA_RK4(1) * e11_force_RK(i,j,ispec,i_sls,1) + &
+                                        BETA_RK4(2) * e11_force_RK(i,j,ispec,i_sls,2) + &
+                                        BETA_RK4(3) * e11_force_RK(i,j,ispec,i_sls,3) + &
+                                        BETA_RK4(4) * e11_force_RK(i,j,ispec,i_sls,4))
               endif
 
-              e13_force_RK(i,j,ispec,i_sls,i_stage) = deltat * ((dux_dzl_n(i,j,ispec) + duz_dxl_n(i,j,ispec))*phinu2 - &
-                                                                 e13(i,j,ispec,i_sls) * tauinvnu2)
-              if (i_stage==1 .or. i_stage==2 .or. i_stage==3) then
-                if (i_stage == 1)weight_rk = 0.5_CUSTOM_REAL
-                if (i_stage == 2)weight_rk = 0.5_CUSTOM_REAL
-                if (i_stage == 3)weight_rk = 1._CUSTOM_REAL
+              ! initial field
+              if (i_stage == 1) e13_initial_rk(i,j,ispec,i_sls) = e13(i,j,ispec,i_sls)
 
-                if (i_stage==1) e13_initial_rk(i,j,ispec,i_sls) = e13(i,j,ispec,i_sls)
+              ! intermediate fields
+              e13_force_RK(i,j,ispec,i_sls,i_stage) = (dux_dzl_n(i,j,ispec) + duz_dxl_n(i,j,ispec))*phinu2 - &
+                                                            e13(i,j,ispec,i_sls) * tauinvnu2
+
+              if (i_stage == 1 .or. i_stage == 2 .or. i_stage == 3) then
+                ! note: this prepare the fields for the next stage, i.e., used at istage+1
+                weight_rk = ALPHA_RK4(i_stage+1) * deltat
                 e13(i,j,ispec,i_sls) = e13_initial_rk(i,j,ispec,i_sls) + weight_rk * e13_force_RK(i,j,ispec,i_sls,i_stage)
-              else if (i_stage==4) then
-                e13(i,j,ispec,i_sls) = e13_initial_rk(i,j,ispec,i_sls) + 1._CUSTOM_REAL / 6._CUSTOM_REAL * &
-                                       (e13_force_RK(i,j,ispec,i_sls,1) + 2._CUSTOM_REAL * e13_force_RK(i,j,ispec,i_sls,2) + &
-                                        2._CUSTOM_REAL * e13_force_RK(i,j,ispec,i_sls,3) + e13_force_RK(i,j,ispec,i_sls,4))
+              else if (i_stage == 4) then
+                ! final update
+                e13(i,j,ispec,i_sls) = e13_initial_rk(i,j,ispec,i_sls) + deltat * &
+                                       (BETA_RK4(1) * e13_force_RK(i,j,ispec,i_sls,1) + &
+                                        BETA_RK4(2) * e13_force_RK(i,j,ispec,i_sls,2) + &
+                                        BETA_RK4(3) * e13_force_RK(i,j,ispec,i_sls,3) + &
+                                        BETA_RK4(4) * e13_force_RK(i,j,ispec,i_sls,4))
               endif
-            endif
+            case default
+              call stop_the_code('Error time scheme not implemented yet in compute_forces_viscoelastic_backward.f90')
+            end select
+
           enddo
         enddo
         enddo
@@ -283,25 +298,18 @@
 
     !--- elastic spectral element
     if (ispec_is_elastic(ispec)) then
-      ! get unrelaxed elastic parameters of current spectral element
-      lambdal_unrelaxed_elastic = poroelastcoef(1,1,kmato(ispec))
-      mul_unrelaxed_elastic = poroelastcoef(2,1,kmato(ispec))
-      lambdalplusmul_unrelaxed_elastic = lambdal_unrelaxed_elastic + mul_unrelaxed_elastic
-      lambdaplus2mu_unrelaxed_elastic = poroelastcoef(3,1,kmato(ispec))
 
       ! first double loop over GLL points to compute and store gradients
       do j = 1,NGLLZ
         do i = 1,NGLLX
-          !--- if external medium, get elastic parameters of current grid point
-          if (assign_external_model) then
-            cpl = vpext(i,j,ispec)
-            csl = vsext(i,j,ispec)
-            rhol = rhoext(i,j,ispec)
-            mul_unrelaxed_elastic = rhol*csl*csl
-            lambdal_unrelaxed_elastic = rhol*cpl*cpl - TWO*mul_unrelaxed_elastic
-            lambdalplusmul_unrelaxed_elastic = lambdal_unrelaxed_elastic + mul_unrelaxed_elastic
-            lambdaplus2mu_unrelaxed_elastic = lambdal_unrelaxed_elastic + TWO*mul_unrelaxed_elastic
-          endif
+          ! get elastic parameters of current grid point
+          mul_unrelaxed_elastic = mustore(i,j,ispec)
+          rhol = rhostore(i,j,ispec)
+          cpl = rho_vpstore(i,j,ispec) / rhol
+
+          lambdal_unrelaxed_elastic = rhol*cpl*cpl - TWO*mul_unrelaxed_elastic
+          lambdalplusmul_unrelaxed_elastic = lambdal_unrelaxed_elastic + mul_unrelaxed_elastic
+          lambdaplus2mu_unrelaxed_elastic = lambdal_unrelaxed_elastic + TWO*mul_unrelaxed_elastic
 
           ! derivative along x and along z
           dux_dxi = 0._CUSTOM_REAL
@@ -336,7 +344,6 @@
               enddo
             endif
 
-
           xixl = xix(i,j,ispec)
           xizl = xiz(i,j,ispec)
           gammaxl = gammax(i,j,ispec)
@@ -354,7 +361,7 @@
           endif
 
           ! compute stress tensor (include attenuation or anisotropy if needed)
-          if (ATTENUATION_VISCOELASTIC_SOLID) then
+          if (ATTENUATION_VISCOELASTIC) then
             ! attenuation is implemented following the memory variable formulation of
             ! J. M. Carcione, Seismic modeling in viscoelastic media, Geophysics,
             ! vol. 58(1), p. 110-120 (1993). More details can be found in
@@ -518,27 +525,15 @@
 
           ! full anisotropy
           if (ispec_is_anisotropic(ispec)) then
-            if (assign_external_model) then
-              c11 = c11ext(i,j,ispec)
-              c13 = c13ext(i,j,ispec)
-              c15 = c15ext(i,j,ispec)
-              c33 = c33ext(i,j,ispec)
-              c35 = c35ext(i,j,ispec)
-              c55 = c55ext(i,j,ispec)
-              c12 = c12ext(i,j,ispec)
-              c23 = c23ext(i,j,ispec)
-              c25 = c25ext(i,j,ispec)
-            else
-              c11 = anisotropy(1,kmato(ispec))
-              c13 = anisotropy(2,kmato(ispec))
-              c15 = anisotropy(3,kmato(ispec))
-              c33 = anisotropy(4,kmato(ispec))
-              c35 = anisotropy(5,kmato(ispec))
-              c55 = anisotropy(6,kmato(ispec))
-              c12 = anisotropy(7,kmato(ispec))
-              c23 = anisotropy(8,kmato(ispec))
-              c25 = anisotropy(9,kmato(ispec))
-            endif
+            c11 = c11store(i,j,ispec)
+            c12 = c12store(i,j,ispec)
+            c13 = c13store(i,j,ispec)
+            c15 = c15store(i,j,ispec)
+            c23 = c23store(i,j,ispec)
+            c25 = c25store(i,j,ispec)
+            c33 = c33store(i,j,ispec)
+            c35 = c35store(i,j,ispec)
+            c55 = c55store(i,j,ispec)
 
             ! implement anisotropy in 2D
             sigma_xx = c11*dux_dxl + c13*duz_dzl + c15*(duz_dxl + dux_dzl)
@@ -551,7 +546,7 @@
           ! also add GLL integration weights
           jacobianl = jacobian(i,j,ispec)
 
-          !! AB AB with the notations of Komatitsch & Tromp 1999 (with 3 -> 2) :
+          !! ABAB with the notations of Komatitsch & Tromp 1999 (with 3 -> 2) :
           ! tempx1(i,j) = w.J.F_{11}^{ij}
           ! tempz1(i,j) = w.J.F_{21}^{ij}
           ! tempx2(i,j) = w.J.F_{12}^{ij}
@@ -563,9 +558,9 @@
 
               if (abs(coord(1,ibool(i,j,ispec))) > TINYVAL) then ! Not first GLJ point
                 if (i == 1) then
-                  stop "error: an axial element is rotated. The code should have been stopped before. Check that your &
-                   &coordinates are >> TINYVAL. Maybe you should also have a look to &
-                   &doc/problematic_case_that_we_exclude_for_axisymmetric.pdf"
+                  call stop_the_code("error: an axial element is rotated. The code should have been stopped before. &
+                   &Check that your coordinates are greater than TINYVAL. Maybe you should also have a look to &
+                   &doc/problematic_case_that_we_exclude_for_axisymmetric.pdf")
                 endif
                 tempx3(i,j) = tempx3(i,j) + wzgll(j)*wxglj(i)*jacobian(i,j,ispec) &
                               * sigma_thetatheta(i,j)/(xiglj(i)+ONE) ! this goes to accel_x

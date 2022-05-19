@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -31,20 +31,16 @@
 !
 !========================================================================
 
-
   subroutine write_postscript_snapshot()
 
-  use constants,only: IMAIN
+  use constants, only: IMAIN
 
   use specfem_par, only: myrank,P_SV,it, &
-                         potential_acoustic,potential_gravitoacoustic, &
-                         potential_gravito,displ_elastic,displs_poroelastic, &
-                         potential_dot_acoustic,potential_dot_gravitoacoustic, &
-                         potential_dot_gravito,veloc_elastic,velocs_poroelastic, &
-                         potential_dot_dot_acoustic,potential_dot_dot_gravitoacoustic, &
-                         potential_dot_dot_gravito,accel_elastic,accels_poroelastic
+                         potential_acoustic,displ_elastic,displs_poroelastic, &
+                         potential_dot_acoustic,veloc_elastic,velocs_poroelastic, &
+                         potential_dot_dot_acoustic,accel_elastic,accels_poroelastic
 
-  use specfem_par_movie,only: imagetype_postscript
+  use shared_parameters, only: imagetype_postscript
 
   implicit none
 
@@ -61,18 +57,15 @@
     case (1)
       ! displacement
       if (myrank == 0) write(IMAIN,*) 'drawing displacement vector as small arrows...'
-      call compute_vector_whole_medium(potential_acoustic,potential_gravitoacoustic, &
-                                       potential_gravito,displ_elastic,displs_poroelastic)
+      call compute_vector_whole_medium(potential_acoustic,displ_elastic,displs_poroelastic)
     case (2)
       ! velocity
       if (myrank == 0) write(IMAIN,*) 'drawing velocity vector as small arrows...'
-      call compute_vector_whole_medium(potential_dot_acoustic,potential_dot_gravitoacoustic, &
-                                       potential_dot_gravito,veloc_elastic,velocs_poroelastic)
+      call compute_vector_whole_medium(potential_dot_acoustic,veloc_elastic,velocs_poroelastic)
     case (3)
       ! acceleration
       if (myrank == 0) write(IMAIN,*) 'drawing acceleration vector as small arrows...'
-      call compute_vector_whole_medium(potential_dot_dot_acoustic,potential_dot_dot_gravitoacoustic, &
-                                       potential_dot_dot_gravito,accel_elastic,accels_poroelastic)
+      call compute_vector_whole_medium(potential_dot_dot_acoustic,accel_elastic,accels_poroelastic)
     case default
       call exit_MPI(myrank,'wrong type for PostScript snapshots')
     end select
@@ -87,6 +80,7 @@
   ! user output
   if (myrank == 0) then
     write(IMAIN,*) 'PostScript file written'
+    write(IMAIN,*)
     call flush_IMAIN()
   endif
 

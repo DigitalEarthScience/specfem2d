@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -40,7 +40,7 @@ program adj_seismogram
 ! within a given time window
 !
 ! compilation:
-!    rm -rf xadj_seismogram ; gfortran adj_seismogram.f90 -o xadj_seismogram
+!    rm -r -f xadj_seismogram ; gfortran adj_seismogram.f90 -o xadj_seismogram
 !
 ! usage example:
 !    ./xadj_seismogram 27.0 32.  AA.S0001  1
@@ -71,11 +71,17 @@ program adj_seismogram
   double precision,dimension(nrec) :: tstart(nrec),tend(nrec)
   character(len=150), dimension(nrec) :: station_name
 
-  ! tolerance
-  double precision, parameter :: EPS = 1.d-40
-
   ! input
   character(len=256) :: arg
+
+  ! tolerance
+  double precision, parameter :: EPS = 1.d-40
+  double precision, parameter :: SMALLVAL = 1.d-9
+  double precision, parameter :: PI = 3.141592653589793d0
+
+  ! window taper: 1 == Welch / 2 == cosine
+  integer,parameter :: window_taper_type = 1
+
 
 !--------------------------------------------------------------------------------
 ! USER PARAMETERS
@@ -162,23 +168,23 @@ program adj_seismogram
 
   ! user output
   print *,'adjoint source - seismogram:'
-  print *,''
+  print *
   print *,'setup:'
   print *,'  number of adjoint stations (nrec)   = ',nrec
   do irec = 1,nrec
     print *,'  station name ',irec,':    ',station_name(irec)
   enddo
-  print *,''
+  print *
   print *,'  seismogram components   = ',NDIMr
   if (NDIMr == 1) then
     print *,'  seismogram label        = ',compr(1)
   else
     print *,'  seismogram labels       = ',compr(1),' / ',compr(2)
   endif
-  print *,''
+  print *
   print *,'  time window start/end                           = ',tstart(1),tend(1)
-  print *,'  adjoint source trace component (1==X/2==Y/3==Z) = ',adj_comp
-  print *,''
+  print *,'  adjoint source trace component (1 == X / 2 == Y / 3 == Z) = ',adj_comp
+  print *
 
   ! basic check
   do irec = 1,nrec
@@ -245,7 +251,7 @@ program adj_seismogram
           ! checks start time
           if (itime == 1) then
             time0 = time
-            if (abs(t0 - time0) > 1.e-5) then
+            if (abs(t0 - time0) > SMALLVAL) then
               print *,'Error: start time',time0,' in file ',trim(filename),' does not match t0 = ',t0
               stop 40
             endif
@@ -253,7 +259,7 @@ program adj_seismogram
 
           ! checks time step size
           if (itime == NSTEP) then
-            if (abs( (time - time0)/dble(NSTEP-1) - deltat) > 1.e-5) then
+            if (abs( (time - time0)/dble(NSTEP-1) - deltat) > SMALLVAL) then
               print *,'Error: time step size ',(time-time0)/dble(NSTEP-1),' in file ',trim(filename), &
                       ' does not match deltat = ',deltat
               stop 50
@@ -269,11 +275,11 @@ program adj_seismogram
   ! user output
   print *,'reading input traces:'
   print *,'  number of time steps (NSTEP)  = ',NSTEP
-  print *,''
+  print *
   print *,'  start time (t0)               = ',t0
   print *,'  end time                      = ',(NSTEP-1)*deltat + t0
   print *,'  time step size (deltat)       = ',deltat
-  print *,''
+  print *
 
   ! allocates trace arrays
   allocate( time_window(NSTEP), &
@@ -314,6 +320,7 @@ program adj_seismogram
     endif
 
     ! start/end index
+    ! (note that early start times have negative t0. it needs to be added to find correct index)
     istart = floor((tstart(irec) - t0)/deltat) + 1
     iend = ceiling((tend(irec) - t0)/deltat) + 1
 
@@ -333,9 +340,9 @@ program adj_seismogram
     print *,'time window:'
     print *,'  index      : istart =',istart, 'iend =', iend
     print *,'  time window: tstart =',(istart-1)*deltat + t0, 'tend =',(iend-1)*deltat + t0
-    print *,''
+    print *
 
-    if(istart >= iend) then
+    if (istart >= iend) then
       print *,"Error start/end index: ",istart,iend
       stop 11
     endif
@@ -355,20 +362,31 @@ program adj_seismogram
         stop 60
       endif
 
+      ! time window
       time_window(:) = 0.d0
-      seism_win(:) = seism(:,icomp)
-      seism_veloc(:) = 0.d0
-      seism_accel(:) = 0.d0
-
-      do itime = istart,iend
-        ! cosine window
-        !time_window(itime) = 1.d0 - cos(pi*(itime-1)/NSTEP+1)**10
-
+      select case (window_taper_type)
+      case (1)
         ! Welch window
-        time_window(itime) = 1.d0 - (2* (dble(itime) - istart)/(iend-istart) -1.d0)**2
-      enddo
+        do itime = istart,iend
+          time_window(itime) = 1.d0 - (2* (dble(itime) - istart)/(iend-istart) -1.d0)**2
+        enddo
+
+      case (2)
+        ! cosine window
+        do itime = istart,iend
+          time_window(itime) = 1.d0 - cos(PI*(itime-1)/NSTEP+1)**10
+        enddo
+
+      case default
+        print *,'Invalid window taper type ',window_taper_type
+        print *,'Please choose 1 == Welch or 2 == cosine and re-compile before running'
+        stop 60
+      end select
+
+      seism_win(:) = seism(:,icomp)
 
       ! first time derivative (by finite-differences)
+      seism_veloc(:) = 0.d0
       do itime = 2,NSTEP-1
          seism_veloc(itime) = (seism_win(itime+1) - seism_win(itime-1))/(2*deltat)
       enddo
@@ -376,6 +394,7 @@ program adj_seismogram
       seism_veloc(NSTEP) = (seism_win(NSTEP) - seism_win(NSTEP-1))/deltat
 
       ! second time derivative
+      seism_accel(:) = 0.d0
       do itime = 2,NSTEP-1
          seism_accel(itime) = (seism_veloc(itime+1) - seism_veloc(itime-1))/(2*deltat)
       enddo
@@ -387,7 +406,7 @@ program adj_seismogram
 
       !Nnorm = deltat * sum(time_window(:) * seism_veloc(:) * seism_veloc(:))
 
-      if(abs(Nnorm) > EPS) then
+      if (abs(Nnorm) > EPS) then
          !ft_bar(:) = -seism_veloc(:) * time_window(:) / Nnorm
          ft_bar(:) = seism_veloc(:) * time_window(:) / Nnorm
          print *,'Norm =', Nnorm
@@ -396,15 +415,17 @@ program adj_seismogram
          print *,'Norm =', Nnorm
          ft_bar(:) = 0.d0
       endif
-      print *,''
+      print *
 
-      do itime = 1,NSTEP
-         if(icomp == adj_comp) then
-            write(11,*) (itime-1)*deltat - t0, ft_bar(itime)
-         else
-            write(11,*) (itime-1)*deltat - t0, 0.d0
-         endif
-      enddo
+      if (icomp == adj_comp) then
+        do itime = 1,NSTEP
+          write(11,*) (itime-1)*deltat + t0, ft_bar(itime)
+        enddo
+      else
+        do itime = 1,NSTEP
+          write(11,*) (itime-1)*deltat + t0, 0.d0
+        enddo
+      endif
       close(11)
 
     enddo

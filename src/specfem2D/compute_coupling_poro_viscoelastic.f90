@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -35,15 +35,17 @@
 
   subroutine compute_coupling_poro_viscoelastic(displ_elastic,displs_poroelastic,displw_poroelastic,accels_poroelastic)
 
-  use constants,only: CUSTOM_REAL,NDIM,NGLLX,NGLLZ,ZERO,TWO,IRIGHT,ILEFT,IBOTTOM,ITOP
+  use constants, only: CUSTOM_REAL,NDIM,NGLLX,NGLLZ,ZERO,TWO,IRIGHT,ILEFT,IBOTTOM,ITOP
 
-  use specfem_par, only: num_solid_poro_edges,&
+  use specfem_par, only: num_solid_poro_edges, &
                          ibool,wxgll,wzgll,xix,xiz,gammax,gammaz,jacobian,ivalue,jvalue,ivalue_inverse,jvalue_inverse, &
                          hprime_xx,hprime_zz, &
                          solid_poro_elastic_ispec,solid_poro_elastic_iedge, &
-                         solid_poro_poroelastic_ispec,solid_poro_poroelastic_iedge,&
-                         kmato,poroelastcoef, &
-                         assign_external_model,c11ext,c13ext,c15ext,c33ext,c35ext,c55ext,c12ext,c23ext,c25ext,anisotropy, &
+                         solid_poro_poroelastic_ispec,solid_poro_poroelastic_iedge, &
+                         ispec_is_anisotropic, &
+                         rhostore,mustore,rho_vpstore, &
+                         c11store,c13store,c15store,c33store,c35store,c55store,c12store,c23store,c25store, &
+                         phistore,tortstore,kappaarraystore,mufr_store, &
                          nglob_elastic,nglob_poroelastic
 
   implicit none
@@ -57,11 +59,11 @@
   integer :: inum,ispec_elastic,iedge_elastic,ispec_poroelastic,iedge_poroelastic, &
              i,j,k,ipoin1D,iglob
 
-  double precision :: kappa_s,kappa_f,kappa_fr,mu_s,mu_fr,rho_s,rho_f,eta_f,phi,tort,rho_bar
+  double precision :: phi,tort,kappa_s,kappa_f,kappa_fr,mu_fr
   double precision :: D_biot,H_biot,C_biot,M_biot
 
   double precision :: c11,c13,c15,c33,c35,c55,c12,c23,c25
-  double precision :: mul_unrelaxed_elastic,lambdal_unrelaxed_elastic,lambdaplus2mu_unrelaxed_elastic
+  double precision :: mul_unrelaxed_elastic,lambdal_unrelaxed_elastic,lambdaplus2mu_unrelaxed_elastic,rhol,cpl
 
   real(kind=CUSTOM_REAL) :: mu_G,lambdal_G,lambdalplus2mul_G
   real(kind=CUSTOM_REAL) :: dux_dxi,dux_dgamma,duz_dxi,duz_dgamma
@@ -92,10 +94,13 @@
       j = jvalue_inverse(ipoin1D,iedge_elastic)
       iglob = ibool(i,j,ispec_elastic)
 
-      ! get elastic properties
-      lambdal_unrelaxed_elastic = poroelastcoef(1,1,kmato(ispec_elastic))
-      mul_unrelaxed_elastic = poroelastcoef(2,1,kmato(ispec_elastic))
-      lambdaplus2mu_unrelaxed_elastic = poroelastcoef(3,1,kmato(ispec_elastic))
+      ! get elastic parameters of current grid point
+      mul_unrelaxed_elastic = mustore(i,j,ispec_elastic)
+      rhol = rhostore(i,j,ispec_elastic)
+      cpl = rho_vpstore(i,j,ispec_elastic) / rhol
+
+      lambdal_unrelaxed_elastic = rhol*cpl*cpl - TWO * mul_unrelaxed_elastic
+      lambdaplus2mu_unrelaxed_elastic = lambdal_unrelaxed_elastic + TWO * mul_unrelaxed_elastic
 
       ! derivative along x and along z for u_s and w
       dux_dxi = ZERO
@@ -127,29 +132,18 @@
 
       ! compute stress tensor
       ! full anisotropy
-      if (kmato(ispec_elastic) == 2) then
+      if (ispec_is_anisotropic(ispec_elastic)) then
         ! implement anisotropy in 2D
-        if (assign_external_model) then
-          c11 = c11ext(i,j,ispec_elastic)
-          c13 = c13ext(i,j,ispec_elastic)
-          c15 = c15ext(i,j,ispec_elastic)
-          c33 = c33ext(i,j,ispec_elastic)
-          c35 = c35ext(i,j,ispec_elastic)
-          c55 = c55ext(i,j,ispec_elastic)
-          c12 = c12ext(i,j,ispec_elastic)
-          c23 = c23ext(i,j,ispec_elastic)
-          c25 = c25ext(i,j,ispec_elastic)
-        else
-          c11 = anisotropy(1,kmato(ispec_elastic))
-          c13 = anisotropy(2,kmato(ispec_elastic))
-          c15 = anisotropy(3,kmato(ispec_elastic))
-          c33 = anisotropy(4,kmato(ispec_elastic))
-          c35 = anisotropy(5,kmato(ispec_elastic))
-          c55 = anisotropy(6,kmato(ispec_elastic))
-          c12 = anisotropy(7,kmato(ispec_elastic))
-          c23 = anisotropy(8,kmato(ispec_elastic))
-          c25 = anisotropy(9,kmato(ispec_elastic))
-        endif
+        c11 = c11store(i,j,ispec_elastic)
+        c12 = c12store(i,j,ispec_elastic)
+        c13 = c13store(i,j,ispec_elastic)
+        c15 = c15store(i,j,ispec_elastic)
+        c23 = c23store(i,j,ispec_elastic)
+        c25 = c25store(i,j,ispec_elastic)
+        c33 = c33store(i,j,ispec_elastic)
+        c35 = c35store(i,j,ispec_elastic)
+        c55 = c55store(i,j,ispec_elastic)
+
         sigma_xx = c11*dux_dxl + c15*(duz_dxl + dux_dzl) + c13*duz_dzl
         sigma_zz = c13*dux_dxl + c35*(duz_dxl + dux_dzl) + c33*duz_dzl
         sigma_xz = c15*dux_dxl + c55*(duz_dxl + dux_dzl) + c35*duz_dzl
@@ -166,8 +160,12 @@
       iglob = ibool(i,j,ispec_poroelastic)
 
       ! gets poroelastic material
-      call get_poroelastic_material(ispec_poroelastic,phi,tort,mu_s,kappa_s,rho_s, &
-                                    kappa_f,rho_f,eta_f,mu_fr,kappa_fr,rho_bar)
+      phi = phistore(i,j,ispec_poroelastic)
+      tort = tortstore(i,j,ispec_poroelastic)
+      kappa_s = kappaarraystore(1,i,j,ispec_poroelastic)
+      kappa_f = kappaarraystore(2,i,j,ispec_poroelastic)
+      kappa_fr = kappaarraystore(3,i,j,ispec_poroelastic)
+      mu_fr = mufr_store(i,j,ispec_poroelastic)
 
       ! Biot coefficients for the input phi
       call get_poroelastic_Biot_coeff(phi,kappa_s,kappa_f,kappa_fr,mu_fr,D_biot,H_biot,C_biot,M_biot)
@@ -249,14 +247,14 @@
         nx = + zxi / jacobian1D
         nz = - xxi / jacobian1D
         weight = jacobian1D * wxgll(i)
-      else if (iedge_poroelastic ==ILEFT) then
+      else if (iedge_poroelastic == ILEFT) then
         xgamma = - xiz(i,j,ispec_poroelastic) * jacobian(i,j,ispec_poroelastic)
         zgamma = + xix(i,j,ispec_poroelastic) * jacobian(i,j,ispec_poroelastic)
         jacobian1D = sqrt(xgamma**2 + zgamma**2)
         nx = - zgamma / jacobian1D
         nz = + xgamma / jacobian1D
         weight = jacobian1D * wzgll(j)
-      else if (iedge_poroelastic ==IRIGHT) then
+      else if (iedge_poroelastic == IRIGHT) then
         xgamma = - xiz(i,j,ispec_poroelastic) * jacobian(i,j,ispec_poroelastic)
         zgamma = + xix(i,j,ispec_poroelastic) * jacobian(i,j,ispec_poroelastic)
         jacobian1D = sqrt(xgamma**2 + zgamma**2)
@@ -321,14 +319,14 @@
 !
 ! This implementation highly helped stability especially with unstructured meshes.
 
-  use constants,only: CUSTOM_REAL,NDIM,NGLLX,NGLLZ,ZERO
+  use constants, only: CUSTOM_REAL,NDIM,NGLLX,NGLLZ,ZERO
 
   use specfem_par, only: num_solid_poro_edges, &
                          ibool,ivalue,jvalue, &
                          solid_poro_elastic_ispec,solid_poro_elastic_iedge, &
-                         solid_poro_poroelastic_ispec,solid_poro_poroelastic_iedge,&
+                         solid_poro_poroelastic_ispec,solid_poro_poroelastic_iedge, &
                          rmass_inverse_elastic, &
-                         rmass_s_inverse_poroelastic,&
+                         rmass_s_inverse_poroelastic, &
                          time_stepping_scheme,nglob, &
                          nglob_elastic,nglob_poroelastic
 
@@ -339,7 +337,7 @@
   real(kind=CUSTOM_REAL), dimension(NDIM,nglob_poroelastic), intent(inout) :: velocs_poroelastic,accels_poroelastic
   real(kind=CUSTOM_REAL), dimension(NDIM,nglob_poroelastic), intent(inout) :: velocw_poroelastic,accelw_poroelastic
 
-  double precision :: deltatover2
+  real(kind=CUSTOM_REAL),intent(in) :: deltatover2
 
   !local variables
   integer :: inum,ispec_elastic,iedge_elastic,ispec_poroelastic,iedge_poroelastic, &
@@ -372,16 +370,18 @@
         ! only do this once on a global node
         mask_ibool(iglob) = .true.
 
-        if (time_stepping_scheme == 1) then
-          veloc_elastic(1,iglob) = veloc_elastic(1,iglob) - deltatover2*accel_elastic(1,iglob)
-          veloc_elastic(2,iglob) = veloc_elastic(2,iglob) - deltatover2*accel_elastic(2,iglob)
+        select case(time_stepping_scheme)
+        case (1)
+          ! Newmark
+          veloc_elastic(1,iglob) = veloc_elastic(1,iglob) - deltatover2 * accel_elastic(1,iglob)
+          veloc_elastic(2,iglob) = veloc_elastic(2,iglob) - deltatover2 * accel_elastic(2,iglob)
 
           accel_elastic(1,iglob) = accel_elastic(1,iglob) / rmass_inverse_elastic(1,iglob)
           accel_elastic(2,iglob) = accel_elastic(2,iglob) / rmass_inverse_elastic(2,iglob)
 
           ! recovering original velocities and accelerations on boundaries (poro side)
-          velocs_poroelastic(1,iglob) = velocs_poroelastic(1,iglob) - deltatover2*accels_poroelastic(1,iglob)
-          velocs_poroelastic(2,iglob) = velocs_poroelastic(2,iglob) - deltatover2*accels_poroelastic(2,iglob)
+          velocs_poroelastic(1,iglob) = velocs_poroelastic(1,iglob) - deltatover2 * accels_poroelastic(1,iglob)
+          velocs_poroelastic(2,iglob) = velocs_poroelastic(2,iglob) - deltatover2 * accels_poroelastic(2,iglob)
 
           accels_poroelastic(1,iglob) = accels_poroelastic(1,iglob) / rmass_s_inverse_poroelastic(iglob)
           accels_poroelastic(2,iglob) = accels_poroelastic(2,iglob) / rmass_s_inverse_poroelastic(iglob)
@@ -397,18 +397,21 @@
           accels_poroelastic(2,iglob) = accel_elastic(2,iglob)
 
           ! updating velocities
-          velocs_poroelastic(1,iglob) = velocs_poroelastic(1,iglob) + deltatover2*accels_poroelastic(1,iglob)
-          velocs_poroelastic(2,iglob) = velocs_poroelastic(2,iglob) + deltatover2*accels_poroelastic(2,iglob)
+          velocs_poroelastic(1,iglob) = velocs_poroelastic(1,iglob) + deltatover2 * accels_poroelastic(1,iglob)
+          velocs_poroelastic(2,iglob) = velocs_poroelastic(2,iglob) + deltatover2 * accels_poroelastic(2,iglob)
 
-          veloc_elastic(1,iglob) = veloc_elastic(1,iglob) + deltatover2*accel_elastic(1,iglob)
-          veloc_elastic(2,iglob) = veloc_elastic(2,iglob) + deltatover2*accel_elastic(2,iglob)
+          veloc_elastic(1,iglob) = veloc_elastic(1,iglob) + deltatover2 * accel_elastic(1,iglob)
+          veloc_elastic(2,iglob) = veloc_elastic(2,iglob) + deltatover2 * accel_elastic(2,iglob)
 
           ! zeros w
           accelw_poroelastic(1,iglob) = 0._CUSTOM_REAL
           accelw_poroelastic(2,iglob) = 0._CUSTOM_REAL
           velocw_poroelastic(1,iglob) = 0._CUSTOM_REAL
           velocw_poroelastic(2,iglob) = 0._CUSTOM_REAL
-        endif
+
+        case default
+          call stop_the_code('Error time scheme not implemented yet in coupling_poro_viscoelastic.f90')
+        end select
 
 !         if (time_stepping_scheme == 2) then
 !        recovering original velocities and accelerations on boundaries (elastic side)

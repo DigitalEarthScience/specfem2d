@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -33,7 +33,7 @@
 
   subroutine compute_forces_poroelastic_main()
 
-  use constants,only: USE_PORO_VISCOUS_DAMPING,ALPHA_LDDRK,BETA_LDDRK
+  use constants, only: USE_PORO_VISCOUS_DAMPING
   use specfem_par
 
   implicit none
@@ -63,8 +63,8 @@
 
       ! Stacey absorbing boundary
       if (anyabs) then
-        call compute_stacey_poro_fluid(f0_source(1))
-        call compute_stacey_poro_solid(f0_source(1))
+        call compute_stacey_poro_fluid()
+        call compute_stacey_poro_solid()
       endif
 
       ! add coupling with the acoustic side
@@ -82,14 +82,14 @@
         if (SIMULATION_TYPE == 1) then
           ! forward wavefield
           call compute_add_sources_poro(accels_poroelastic,accelw_poroelastic,it,i_stage)
-        else if (SIMULATION_TYPE == 3) then
+        else
           ! adjoint wavefield
           call compute_add_sources_poro_adjoint()
         endif
       endif
     endif
 
-#ifdef USE_MPI
+#ifdef WITH_MPI
     ! assembling accels_proelastic & accelw_poroelastic for poroelastic elements
     if (NPROC > 1 .and. ninterface_poroelastic > 0) then
       if (iphase == 1) then
@@ -121,8 +121,11 @@
   case (3)
     ! Runge-Kutta
     call update_veloc_poroelastic_RK()
+  case (4)
+    ! symplectic PEFRL
+    call update_veloc_poroelastic_symplectic()
   case default
-    stop 'Time stepping scheme not implemented yet for poroelastic case'
+    call stop_the_code('Time stepping scheme not implemented yet for poroelastic case')
   end select
 
   ! imposes continuity for stabilization
@@ -139,10 +142,9 @@
 !-------------------------------------------------------------------------------------
 !
 
-
   subroutine compute_forces_poroelastic_main_backward()
 
-  use constants,only: USE_PORO_VISCOUS_DAMPING,ALPHA_LDDRK,BETA_LDDRK
+  use constants, only: USE_PORO_VISCOUS_DAMPING
   use specfem_par
 
   implicit none
@@ -159,7 +161,8 @@
   if (.not. any_poroelastic) return
 
   ! implement viscous attenuation for poroelastic media
-  if (ATTENUATION_PORO_FLUID_PART) stop 'ATTENUATION_PORO_FLUID_PART not implemented yet for backward/kernel simulations'
+  if (ATTENUATION_PORO_FLUID_PART) call stop_the_code( &
+'ATTENUATION_PORO_FLUID_PART not implemented yet for backward/kernel simulations')
 
   ! distinguishes two runs: for elements on MPI interfaces, and elements within the partitions
   do iphase = 1,2
@@ -196,7 +199,7 @@
       endif
     endif
 
-#ifdef USE_MPI
+#ifdef WITH_MPI
     ! assembling accels_proelastic & accelw_poroelastic for poroelastic elements
     if (NPROC > 1 .and. ninterface_poroelastic > 0) then
       if (iphase == 1) then
@@ -224,12 +227,15 @@
     call update_veloc_poroelastic_Newmark_backward()
   case (2)
     ! LDDRK
-    if (SIMULATION_TYPE == 3) stop 'LDDRK scheme for poroelastic kernel simulation not implemented yet'
+    if (SIMULATION_TYPE == 3) call stop_the_code('LDDRK scheme for poroelastic kernel simulation not implemented yet')
   case (3)
     ! Runge-Kutta
-    if (SIMULATION_TYPE == 3) stop 'RK scheme for poroelastic kernel simulation not implemented yet'
+    if (SIMULATION_TYPE == 3) call stop_the_code('RK scheme for poroelastic kernel simulation not implemented yet')
+  case (4)
+    ! symplectic PEFRL
+    call update_veloc_poroelastic_symplectic_backward()
   case default
-    stop 'Time stepping scheme not implemented yet for poroelastic case'
+    call stop_the_code('Time stepping scheme not implemented yet for poroelastic case')
   end select
 
   ! imposes continuity for stabilization

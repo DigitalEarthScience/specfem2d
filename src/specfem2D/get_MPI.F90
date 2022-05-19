@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -31,18 +31,18 @@
 !
 !========================================================================
 
-
   subroutine get_MPI()
 
 ! sets up MPI arrays
 
-  use constants,only: IMAIN
-  use shared_parameters,only: NPROC
+  use constants, only: IMAIN,USE_A_STRONG_FORMULATION_FOR_E1
+  use shared_parameters, only: NPROC
   use specfem_par
 
   implicit none
+
   ! local parameters
-  integer :: i,iinterface,imax_all
+  integer :: i,iinterface,imax_all,ier,n_sls_loc
 
   ! user output
   if (myrank == 0) then
@@ -77,7 +77,7 @@
   if (NPROC > 1) then
     ! user output
     if (myrank == 0) then
-      write(IMAIN,*) '  master process:'
+      write(IMAIN,*) '  main process:'
       write(IMAIN,*) '  number of MPI interfaces in acoustic domain    = ',ninterface_acoustic
       write(IMAIN,*) '  number of MPI interfaces in elastic domain     = ',ninterface_elastic
       write(IMAIN,*) '  number of MPI interfaces in poroelastic domain = ',ninterface_poroelastic
@@ -94,27 +94,41 @@
     max_ibool_interfaces_size_po = NDIM*maxval(nibool_interfaces_poroelastic(:))
 
     if (ACOUSTIC_SIMULATION) then
-      allocate(request_send_recv_acoustic(ninterface_acoustic*2))
-      allocate(buffer_send_faces_vector_ac(max_ibool_interfaces_size_ac,ninterface_acoustic))
-      allocate(buffer_recv_faces_vector_ac(max_ibool_interfaces_size_ac,ninterface_acoustic))
+      n_sls_loc = 0
+      if (ATTENUATION_VISCOACOUSTIC .and. .not. USE_A_STRONG_FORMULATION_FOR_E1) n_sls_loc = N_SLS
+      allocate(request_send_recv_acoustic(ninterface_acoustic*2),stat=ier)
+      if (ier /= 0) call stop_the_code('error in allocation of array request_send_recv_acoustic')
+      allocate(buffer_send_faces_vector_ac(max_ibool_interfaces_size_ac*(n_sls_loc+1),ninterface_acoustic),stat=ier)
+      if (ier /= 0) call stop_the_code('error in allocation of array buffer_send_faces_vector_ac')
+      allocate(buffer_recv_faces_vector_ac(max_ibool_interfaces_size_ac*(n_sls_loc+1),ninterface_acoustic),stat=ier)
+      if (ier /= 0) call stop_the_code('error in allocation of array buffer_recv_faces_vector_ac')
     endif
 
     if (ELASTIC_SIMULATION) then
-      allocate(request_send_recv_elastic(ninterface_elastic*2))
-      allocate(buffer_send_faces_vector_el(max_ibool_interfaces_size_el,ninterface_elastic))
-      allocate(buffer_recv_faces_vector_el(max_ibool_interfaces_size_el,ninterface_elastic))
+      allocate(request_send_recv_elastic(ninterface_elastic*2),stat=ier)
+      if (ier /= 0) call stop_the_code('error in allocation of array request_send_recv_elastic')
+      allocate(buffer_send_faces_vector_el(max_ibool_interfaces_size_el,ninterface_elastic),stat=ier)
+      if (ier /= 0) call stop_the_code('error in allocation of array buffer_send_faces_vector_el')
+      allocate(buffer_recv_faces_vector_el(max_ibool_interfaces_size_el,ninterface_elastic),stat=ier)
+      if (ier /= 0) call stop_the_code('error in allocation of array buffer_recv_faces_vector_el')
     endif
 
     if (POROELASTIC_SIMULATION) then
-      allocate(request_send_recv_poro(ninterface_poroelastic*4))
-      allocate(buffer_send_faces_vector_pos(max_ibool_interfaces_size_po,ninterface_poroelastic))
-      allocate(buffer_recv_faces_vector_pos(max_ibool_interfaces_size_po,ninterface_poroelastic))
-      allocate(buffer_send_faces_vector_pow(max_ibool_interfaces_size_po,ninterface_poroelastic))
-      allocate(buffer_recv_faces_vector_pow(max_ibool_interfaces_size_po,ninterface_poroelastic))
+      allocate(request_send_recv_poro(ninterface_poroelastic*4),stat=ier)
+      if (ier /= 0) call stop_the_code('error in allocation of array request_send_recv_poro')
+      allocate(buffer_send_faces_vector_pos(max_ibool_interfaces_size_po,ninterface_poroelastic),stat=ier)
+      if (ier /= 0) call stop_the_code('error in allocation of array buffer_send_faces_vector_pos')
+      allocate(buffer_recv_faces_vector_pos(max_ibool_interfaces_size_po,ninterface_poroelastic),stat=ier)
+      if (ier /= 0) call stop_the_code('error in allocation of array buffer_recv_faces_vector_pos')
+      allocate(buffer_send_faces_vector_pow(max_ibool_interfaces_size_po,ninterface_poroelastic),stat=ier)
+      if (ier /= 0) call stop_the_code('error in allocation of array buffer_send_faces_vector_pow')
+      allocate(buffer_recv_faces_vector_pow(max_ibool_interfaces_size_po,ninterface_poroelastic),stat=ier)
+      if (ier /= 0) call stop_the_code('error in allocation of array buffer_recv_faces_vector_pow')
     endif
+
   else
     ! safety check
-    if (myrank /= 0) stop 'Invalid myrank for serial simulation'
+    if (myrank /= 0) call stop_the_code('Invalid myrank for serial simulation')
 
     ! user output
     write(IMAIN,*) '  This is a single process simulation, no need for MPI communication'
@@ -124,7 +138,9 @@
 
   ! MPI interfaces arrays
   if (ninterface > 0) then
-    allocate(ibool_interfaces_ext_mesh(max_nibool_interfaces_ext_mesh,ninterface))
+
+    allocate(ibool_interfaces_ext_mesh(max_nibool_interfaces_ext_mesh,ninterface),stat=ier)
+    if (ier /= 0) call stop_the_code('error in allocation of array ibool_interfaces_ext_mesh')
     ibool_interfaces_ext_mesh(:,:) = 0
 
     do iinterface = 1,ninterface
@@ -132,14 +148,9 @@
         ibool_interfaces_ext_mesh(i,iinterface) = ibool_interfaces_ext_mesh_init(i,iinterface)
       enddo
     enddo
-
-    ! user output
-    call max_all_i(max_nibool_interfaces_ext_mesh,imax_all)
-    if (myrank == 0) then
-      write(IMAIN,*) '  maximum length of a single MPI interface  = ',imax_all
-      write(IMAIN,*)
-      call flush_IMAIN()
-    endif
+  else
+    ! dummy array
+    allocate(ibool_interfaces_ext_mesh(1,1))
   endif
 
   ! sets up inner and outer elements
@@ -159,9 +170,9 @@
 
 ! sets up the MPI interface for communication between partitions
 
-  use constants,only: CUSTOM_REAL,IMAIN,NGLLX,NGLLZ
+  use constants, only: CUSTOM_REAL,IMAIN,NGLLX,NGLLZ
 
-  use shared_parameters,only: NPROC
+  use shared_parameters, only: NPROC
 
   use specfem_par, only: nspec,ibool,nglob,ninterface,myrank,coord,ACOUSTIC_SIMULATION
 
@@ -354,8 +365,8 @@
       deallocate(mask_ibool)
     endif
 
-    ! note: this mpi reduction awaits information from all processes.
-    !          thus, avoid an mpi deadlock in case some of the paritions have no acoustic interface
+    ! note: this MPI reduction awaits information from all processes.
+    !          thus, avoid an MPI deadlock in case some of the paritions have no acoustic interface
     call sum_all_i(inum,num_points1)
     if (myrank == 0) then
       write(IMAIN,*) '  total number of global acoustic interface points: ',num_points1
@@ -372,7 +383,7 @@
       allocate(buffer_send_faces_vector_ac(max_nibool_interfaces,ninterface_acoustic))
       allocate(buffer_recv_faces_vector_ac(max_nibool_interfaces,ninterface_acoustic))
 
-      ! custom_real arrays
+      ! CUSTOM_REAL arrays
       call assemble_MPI_scalar_ac_blocking(test_flag_cr)
 
       ! checks number of interface points
@@ -388,7 +399,7 @@
       deallocate(test_flag_cr)
     endif
 
-    ! note: this mpi reduction awaits information from all processes.
+    ! note: this MPI reduction awaits information from all processes.
     call sum_all_i(inum,num_points2)
     if (myrank == 0) then
       write(IMAIN,*) '  total number of global points assembled by acoustic MPI interfaces:',num_points2
@@ -397,7 +408,7 @@
 
     ! checks
     if (num_points1 /= num_points2) then
-      stop 'Error acoustic MPI interfaces has invalid assembly'
+      call stop_the_code('Error acoustic MPI interfaces has invalid assembly')
     else
       if (myrank == 0) then
         write(IMAIN,*) '  interfaces okay'
@@ -418,9 +429,9 @@
 
 ! sets up inner and outer elements for overlapping communication
 
-  use constants,only: IMAIN,NGLLX,NGLLZ
+  use constants, only: IMAIN,NGLLX,NGLLZ
 
-  use specfem_par,only: nspec_inner,nspec_outer,ispec_is_inner, &
+  use specfem_par, only: nspec_inner,nspec_outer,ispec_is_inner, &
     ninterface,nibool_interfaces_ext_mesh,ibool_interfaces_ext_mesh, &
     ibool,copy_ibool_ori,integer_mask_ibool, &
     myrank,nspec,nglob,NPROC
@@ -562,7 +573,7 @@
 
   subroutine get_MPI_phase_domains()
 
-  use constants,only: IMAIN
+  use constants, only: IMAIN
   use specfem_par
 
   implicit none
@@ -597,10 +608,10 @@
 
     ! stores indices of inner and outer elements
     num_phase_ispec_elastic = max(nspec_inner_elastic,nspec_outer_elastic)
-    if (num_phase_ispec_elastic < 0 ) stop 'Error elastic simulation: num_phase_ispec_elastic is < zero'
+    if (num_phase_ispec_elastic < 0 ) call stop_the_code('Error elastic simulation: num_phase_ispec_elastic is < zero')
 
     allocate( phase_ispec_inner_elastic(num_phase_ispec_elastic,2),stat=ier)
-    if (ier /= 0 ) stop 'Error allocating array phase_ispec_inner_elastic'
+    if (ier /= 0 ) call stop_the_code('Error allocating array phase_ispec_inner_elastic')
     phase_ispec_inner_elastic(:,:) = 0
 
     ispec_inner = 0
@@ -620,7 +631,7 @@
     ! allocates dummy array
     num_phase_ispec_elastic = 0
     allocate( phase_ispec_inner_elastic(num_phase_ispec_elastic,2),stat=ier)
-    if (ier /= 0 ) stop 'Error allocating dummy array phase_ispec_inner_elastic'
+    if (ier /= 0 ) call stop_the_code('Error allocating dummy array phase_ispec_inner_elastic')
     phase_ispec_inner_elastic(:,:) = 0
   endif
 
@@ -630,7 +641,7 @@
     call sum_all_i(nspec_inner_elastic,ispec_inner)
     if (myrank == 0) then
       ! check
-      if (ispec_inner + ispec_outer == 0) stop 'Invalid total number of inner/outer elements for elastic simulation'
+      if (ispec_inner + ispec_outer == 0) call stop_the_code('Invalid total number of inner/outer elements for elastic simulation')
       ! ratio inner/outer
       percentage_edge = 100.0 * ispec_inner/real(ispec_inner + ispec_outer)
       ! output
@@ -663,10 +674,10 @@
 
     ! stores indices of inner and outer elements for faster(?) computation
     num_phase_ispec_acoustic = max(nspec_inner_acoustic,nspec_outer_acoustic)
-    if (num_phase_ispec_acoustic < 0 ) stop 'Error acoustic simulation: num_phase_ispec_acoustic is < zero'
+    if (num_phase_ispec_acoustic < 0 ) call stop_the_code('Error acoustic simulation: num_phase_ispec_acoustic is < zero')
 
     allocate( phase_ispec_inner_acoustic(num_phase_ispec_acoustic,2),stat=ier)
-    if (ier /= 0 ) stop 'Error allocating array phase_ispec_inner_acoustic'
+    if (ier /= 0 ) call stop_the_code('Error allocating array phase_ispec_inner_acoustic')
     phase_ispec_inner_acoustic(:,:) = 0
 
     ispec_inner = 0
@@ -686,18 +697,19 @@
     ! allocates dummy array
     num_phase_ispec_acoustic = 0
     allocate( phase_ispec_inner_acoustic(num_phase_ispec_acoustic,2),stat=ier)
-    if (ier /= 0 ) stop 'Error allocating dummy array phase_ispec_inner_acoustic'
+    if (ier /= 0 ) call stop_the_code('Error allocating dummy array phase_ispec_inner_acoustic')
     phase_ispec_inner_acoustic(:,:) = 0
   endif
 
   ! user output
   if (ACOUSTIC_SIMULATION) then
-    ! master collects total
+    ! main collects total
     call sum_all_i(nspec_outer_acoustic,ispec_outer)
     call sum_all_i(nspec_inner_acoustic,ispec_inner)
     if (myrank == 0) then
       ! check
-      if (ispec_inner + ispec_outer == 0) stop 'Invalid total number of inner/outer elements for acoustic simulation'
+      if (ispec_inner + ispec_outer == 0) call stop_the_code( &
+'Invalid total number of inner/outer elements for acoustic simulation')
       ! ratio inner/outer
       percentage_edge = 100.0 * ispec_inner/real(ispec_inner + ispec_outer)
       ! output
@@ -729,10 +741,10 @@
 
     ! stores indices of inner and outer elements
     num_phase_ispec_poroelastic = max(nspec_inner_poroelastic,nspec_outer_poroelastic)
-    if (num_phase_ispec_poroelastic < 0 ) stop 'Error poroelastic simulation: num_phase_ispec_poroelastic is < zero'
+    if (num_phase_ispec_poroelastic < 0 ) call stop_the_code('Error poroelastic simulation: num_phase_ispec_poroelastic is < zero')
 
     allocate( phase_ispec_inner_poroelastic(num_phase_ispec_poroelastic,2),stat=ier)
-    if (ier /= 0 ) stop 'Error allocating array phase_ispec_inner_poroelastic'
+    if (ier /= 0 ) call stop_the_code('Error allocating array phase_ispec_inner_poroelastic')
     phase_ispec_inner_poroelastic(:,:) = 0
 
     ispec_inner = 0
@@ -752,7 +764,7 @@
     ! allocates dummy array
     num_phase_ispec_poroelastic = 0
     allocate( phase_ispec_inner_poroelastic(num_phase_ispec_poroelastic,2),stat=ier)
-    if (ier /= 0 ) stop 'Error allocating dummy array phase_ispec_inner_poroelastic'
+    if (ier /= 0 ) call stop_the_code('Error allocating dummy array phase_ispec_inner_poroelastic')
     phase_ispec_inner_poroelastic(:,:) = 0
   endif
 
@@ -762,7 +774,8 @@
     call sum_all_i(nspec_inner_poroelastic,ispec_inner)
     if (myrank == 0) then
       ! check
-      if (ispec_inner + ispec_outer == 0) stop 'Invalid total number of inner/outer elements for poroelastic simulation'
+      if (ispec_inner + ispec_outer == 0) call stop_the_code( &
+'Invalid total number of inner/outer elements for poroelastic simulation')
       ! ratio inner/outer
       percentage_edge = 100.0 * ispec_inner/real(ispec_inner + ispec_outer)
       ! output

@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -60,8 +60,7 @@
 
 program sum_kernels_ascii
 
-  use postprocess_par, only: MAX_STRING_LEN, MAX_KERNEL_PATHS, MAX_KERNEL_NAMES, &
-    IIN
+  use postprocess_par, only: MAX_STRING_LEN, MAX_KERNEL_PATHS, IIN
 
   implicit none
 
@@ -72,7 +71,7 @@ program sum_kernels_ascii
   double precision, allocatable, dimension(:) :: kernel_sum1, kernel_sum2, kernel_sum3
   double precision, allocatable, dimension(:,:) :: coord
   character(len=MAX_STRING_LEN) :: input_file, output_dir, kernel_name
-  character(len=MAX_STRING_LEN) :: kernel_paths(MAX_KERNEL_PATHS)
+  character(len=MAX_STRING_LEN),dimension(:),allocatable :: kernel_paths
   character(len=MAX_STRING_LEN) :: filename, arg(2), line
   integer :: ier
   double precision :: dummy1, dummy2
@@ -83,9 +82,14 @@ program sum_kernels_ascii
 
   if (command_argument_count() /= NARGS) then
     print *, 'USAGE: bin/xsum_kernels_ascii INPUT_FILE OUTPUT_DIR'
-    print *, ''
-    stop 'Please check command line arguments'
+    print *
+    call stop_the_code('Please check command line arguments')
   endif
+
+  ! allocates array
+  allocate(kernel_paths(MAX_KERNEL_PATHS),stat=ier)
+  if (ier /= 0) stop 'Error allocating kernel_paths array'
+  kernel_paths(:) = ''
 
   ! parse command line arguments
   do i = 1, NARGS
@@ -100,13 +104,13 @@ program sum_kernels_ascii
   open(unit = IIN, file = trim(input_file), status = 'old',iostat = ier)
   if (ier /= 0) then
      print *,'Error opening ',trim(input_file)
-     stop 'Please check command line argument: INPUT_FILE'
+     call stop_the_code('Please check command line argument: INPUT_FILE')
   endif
   do while (1 == 1)
      read(IIN,'(a)',iostat=ier) line
      if (ier /= 0) exit
      npath = npath+1
-     if (npath > MAX_KERNEL_PATHS) stop 'Error number of paths exceeds MAX_KERNEL_PATHS'
+     if (npath > MAX_KERNEL_PATHS) call stop_the_code('Error number of paths exceeds MAX_KERNEL_PATHS')
      kernel_paths(npath) = line
   enddo
   close(IIN)

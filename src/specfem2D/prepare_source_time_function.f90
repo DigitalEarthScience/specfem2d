@@ -4,11 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
-!               Pieyre Le Loher, pieyre DOT le-loher aT inria.fr
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -16,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -32,45 +31,79 @@
 !
 !========================================================================
 
-
   subroutine prepare_source_time_function()
 
   ! prepares source_time_function array
 
-  use constants,only: IMAIN,ZERO,ONE,TWO,HALF,PI,QUARTER,SOURCE_DECAY_MIMIC_TRIANGLE,SOURCE_IS_MOVING,C_LDDRK
+  use constants, only: IMAIN,ZERO,ONE,TWO,HALF,PI,QUARTER,OUTPUT_FILES, &
+                       SOURCE_DECAY_MIMIC_TRIANGLE, &
+                       C_LDDRK,C_RK4,ALPHA_SYMPLECTIC
 
-  use specfem_par, only: AXISYM,NSTEP,NSOURCES,source_time_function, &
-                         time_function_type,name_of_source_file,burst_band_width,f0_source,tshift_src,factor, &
-                         t0,deltat, &
-                         time_stepping_scheme,stage_time_scheme,islice_selected_source, &
-                         USE_TRICK_FOR_BETTER_PRESSURE,myrank,initialfield
+  use specfem_par, only: NSTEP, NSOURCES, source_time_function, &
+                         time_function_type, name_of_source_file, burst_band_width, f0_source,tshift_src, &
+                         factor, t0, DT, SOURCE_IS_MOVING, &
+                         time_stepping_scheme, stage_time_scheme, islice_selected_source, &
+                         USE_TRICK_FOR_BETTER_PRESSURE, myrank, initialfield
 
   implicit none
 
   ! local parameters
-  double precision :: stf_used, timeval, aval, DecT, Tc, omegat, omega_coa,time,coeff, t_used, Nc
+  double precision :: stf_used, timeval, DecT, Tc, omegat, omega_coa,dummy_t,coeff, t_used, Nc
   double precision :: hdur,hdur_gauss
 
   integer :: it,i_source,ier,num_file
   integer :: i_stage
 
-  ! RK
-  double precision, dimension(4) :: c_RK
-
-  character(len=27) :: error_msg1 = 'Error opening file source: '
-  character(len=177) :: error_msg
+  character(len=150) :: error_msg1 = 'Error opening the file that contains the external source: '
+  character(len=250) :: error_msg
   logical :: trick_ok
 
   ! external functions
-  double precision, external :: comp_source_time_function_heavi
-  double precision, external :: comp_source_time_function_gaussB,comp_source_time_function_dgaussB, &
-    comp_source_time_function_d2gaussB,comp_source_time_function_d3gaussB
-  double precision, external :: comp_source_time_function_rickr,comp_source_time_function_d2rck
+  double precision, external :: comp_source_time_function_heaviside_hdur
+  double precision, external :: comp_source_time_function_Gaussian,comp_source_time_function_dGaussian, &
+    comp_source_time_function_d2Gaussian,comp_source_time_function_d3Gaussian,marmousi_ormsby_wavelet,cos_taper
+  double precision, external :: comp_source_time_function_Ricker,comp_source_time_function_d2Ricker
 
   ! user output
   if (myrank == 0) then
     write(IMAIN,*)
     write(IMAIN,*) 'Preparing source time function'
+    call flush_IMAIN()
+  endif
+
+  ! Newmark: time_stepping_scheme == 1
+  ! LDDRK  : time_stepping_scheme == 2
+  ! RK     : time_stepping_scheme == 3
+  ! PEFRL  : time_stepping_scheme == 4
+  ! user output
+  select case(time_stepping_scheme)
+  case (1)
+    ! Newmark
+    if (myrank == 0) write(IMAIN,*) '  time stepping scheme:   Newmark'
+  case (2)
+    ! LDDRK
+    if (myrank == 0) write(IMAIN,*) '  time stepping scheme:   LDDRK'
+  case (3)
+    ! RK4
+    if (myrank == 0) write(IMAIN,*) '  time stepping scheme:   RK4'
+  case (4)
+    ! symplectic PEFRL
+    if (myrank == 0) write(IMAIN,*) '  time stepping scheme:   symplectic PEFRL'
+  case default
+    call stop_the_code('Error invalid time stepping scheme for STF')
+  end select
+
+  if (myrank == 0) then
+    write(IMAIN,*) '  time stepping stages: ',stage_time_scheme
+    write(IMAIN,*) '  time step size      : ',sngl(DT)
+    write(IMAIN,*)
+    write(IMAIN,*) '  number of time steps: ',NSTEP
+    if (initialfield) then
+      write(IMAIN,*) '  initital field      : ',initialfield
+    else
+      write(IMAIN,*) '  number of sources   : ',NSOURCES
+    endif
+    write(IMAIN,*)
     call flush_IMAIN()
   endif
 
@@ -85,53 +118,36 @@
     allocate(source_time_function(NSOURCES,NSTEP,stage_time_scheme),stat=ier)
     if (ier /= 0) call exit_MPI(myrank,'Error allocating array source_time_function')
   endif
+
   ! initializes stf array
   source_time_function(:,:,:) = 0.d0
-
-  ! checks time scheme
-  ! Newmark: time_stepping_scheme == 1
-  ! LDDRK  : time_stepping_scheme == 2
-  ! RK     : time_stepping_scheme == 3
-  if (time_stepping_scheme < 1 .or. time_stepping_scheme > 3) stop 'Error invalid time stepping scheme for STF'
-
-  ! RK time scheme constants
-  if (time_stepping_scheme == 3) then
-    c_RK(1) = 0.0d0 * deltat
-    c_RK(2) = 0.5d0 * deltat
-    c_RK(3) = 0.5d0 * deltat
-    c_RK(4) = 1.0d0 * deltat
-  endif
 
   ! user output
   if (myrank == islice_selected_source(1)) then
     if (myrank == 0) then
       write(IMAIN,*) '  saving the source time function in a text file...'
+      write(IMAIN,*)
       call flush_IMAIN()
     endif
     ! opens source time file for output
-    open(unit=55,file='OUTPUT_FILES/plot_source_time_function.txt',status='unknown',iostat=ier)
-    if (ier /= 0) stop 'Error opening source time function text-file'
+    open(unit=55,file=trim(OUTPUT_FILES)//'plot_source_time_function.txt',status='unknown',iostat=ier)
+    if (ier /= 0) call stop_the_code('Error opening source time function text-file')
   endif
 
   ! loop on all the sources
   do i_source = 1,NSOURCES
 
-    if (AXISYM) then
-      factor(i_source) = - factor(i_source)
-    endif
     ! The following lines could be needed to set absolute amplitudes.
-    ! In this case variables vpext,rhoext,density,poroelastcoef,assign_external_model,ispec_selected_source,kmato
-    ! and double precision :: rho, cp logical :: already_done = .false. need to be introduced
-    !    if(myrank == islice_selected_source(i_source)) then
+    !
+    ! use specfem_par, only: rho_vpstore,rhostore,ispec_selected_source
+    ! double precision :: rho, cp
+    ! logical :: already_done = .false. need to be introduced
+    !    if (myrank == islice_selected_source(i_source)) then
     !      if (AXISYM) then
     !        if (.not. already_done) then
-    !          if(  assign_external_model ) then
-    !            cp = vpext(0,0,ispec_selected_source(i_source))
-    !            TODO (above): We must interpolate to find the exact cp value at source location
-    !          else
-    !            rho = density(1,kmato(ispec_selected_source(i_source)))
-    !            cp = sqrt(poroelastcoef(3,1,kmato(ispec_selected_source(i_source)))/rho)
-    !          endif
+    !          cp = rho_vpstore(0,0,ispec_selected_source(i_source)) / rhostore(0,0,ispec_selected_source(i_source))
+    !          TODO (above): We must interpolate to find the exact cp value at source location
+    !
     !          factor(i_source) = - factor(i_source)*2.0d0*cp**2*0.45d-5 !0.225d-5
     !          if (time_function_type (i_source) == 7)  factor(i_source) = factor(i_source) * 222066.1d0 !444132.2d0
     !          already_done = .true.
@@ -162,13 +178,27 @@
         select case(time_stepping_scheme)
         case (1)
           ! Newmark
-          timeval = dble(it-1)*deltat
+          timeval = dble(it-1)*DT
         case (2)
           ! LDDRK: Low-Dissipation and low-dispersion Runge-Kutta
-          timeval = dble(it-1)*deltat + dble(C_LDDRK(i_stage))*deltat
+          ! note: the LDDRK scheme updates displacement after the stiffness computations and
+          !       after adding boundary/coupling/source terms.
+          !       thus, at each time loop step it, displ(:) is still at (n) and not (n+1) like for the Newmark scheme.
+          !       we therefore at an additional -DT to have the corresponding timing for the source.
+          timeval = dble(it-1-1)*DT + dble(C_LDDRK(i_stage))*DT
         case (3)
           ! RK: Runge-Kutta
-          timeval = dble(it-1)*deltat + c_RK(i_stage)*deltat
+          ! note: similar like LDDRK above, displ(n+1) will be determined after stiffness/source/.. computations.
+          !       thus, adding an additional -DT to have the same timing in seismogram as Newmark
+          timeval = dble(it-1-1)*DT + dble(C_RK4(i_stage))*DT
+        case (4)
+          ! symplectic PEFRL
+          ! note: similar like LDDRK above, displ(n+1) will be determined after final stage of stiffness/source/.. computations.
+          !       thus, adding an additional -DT to have the same timing in seismogram as Newmark
+          !
+          !       for symplectic schemes, the current stage time step size is the sum of all previous and current coefficients
+          !          sum( ALPHA_SYMPLECTIC(1:i_stage) ) * DT
+          timeval = dble(it-1-1)*DT + dble(sum(ALPHA_SYMPLECTIC(1:i_stage))) * DT
         case default
           call exit_MPI(myrank,'Error invalid time stepping scheme chosen, please check...')
         end select
@@ -181,7 +211,7 @@
           ! determines source_time_function value for different source types
           select case (time_function_type(i_source))
           case (1)
-            ! Ricker type: second derivative
+            ! Ricker: second derivative of a Gaussian
             if (USE_TRICK_FOR_BETTER_PRESSURE) then
               ! use a trick to increase accuracy of pressure seismograms in fluid (acoustic) elements:
               ! use the second derivative of the source for the source time function instead of the source itself,
@@ -192,18 +222,15 @@
               ! is accurate at second order and thus contains significantly less numerical noise.
               ! Second derivative of Ricker source time function :
               source_time_function(i_source,it,i_stage) =  - factor(i_source) * &
-                       comp_source_time_function_d2rck(t_used,f0_source(i_source))
+                       comp_source_time_function_d2Ricker(t_used,f0_source(i_source))
             else
               ! Ricker (second derivative of a Gaussian) source time function
               source_time_function(i_source,it,i_stage) = - factor(i_source) * &
-                      comp_source_time_function_rickr(t_used,f0_source(i_source))
+                      comp_source_time_function_Ricker(t_used,f0_source(i_source))
             endif
 
           case (2)
-            ! Ricker type: first derivative
-
-            ! for the source time function
-            aval = PI*PI*f0_source(i_source)*f0_source(i_source)
+            ! first derivative of a Gaussian
 
             if (USE_TRICK_FOR_BETTER_PRESSURE) then
               ! use a trick to increase accuracy of pressure seismograms in fluid (acoustic) elements:
@@ -214,19 +241,16 @@
               ! thus in fluid elements potential_dot_dot_acoustic() is accurate at zeroth order while potential_acoustic()
               ! is accurate at second order and thus contains significantly less numerical noise.
               ! Third derivative of Gaussian source time function :
-              source_time_function(i_source,it,i_stage) = factor(i_source) * &
-                        comp_source_time_function_d3gaussB(t_used,f0_source(i_source))
+              source_time_function(i_source,it,i_stage) = - factor(i_source) * &
+                        comp_source_time_function_d3Gaussian(t_used,f0_source(i_source))
             else
               ! First derivative of a Gaussian source time function
-              source_time_function(i_source,it,i_stage) = factor(i_source) * &
-                        comp_source_time_function_dgaussB(t_used,f0_source(i_source))
+              source_time_function(i_source,it,i_stage) = - factor(i_source) * &
+                        comp_source_time_function_dGaussian(t_used,f0_source(i_source))
             endif
 
           case (3,4)
             ! Gaussian/Dirac type
-
-            ! for the source time function
-            aval = PI*PI*f0_source(i_source)*f0_source(i_source)
 
             if (USE_TRICK_FOR_BETTER_PRESSURE) then
               ! use a trick to increase accuracy of pressure seismograms in fluid (acoustic) elements:
@@ -237,12 +261,12 @@
               ! thus in fluid elements potential_dot_dot_acoustic() is accurate at zeroth order while potential_acoustic()
               ! is accurate at second order and thus contains significantly less numerical noise.
               ! Second derivative of Gaussian :
-              source_time_function(i_source,it,i_stage) = factor(i_source) * &
-                         comp_source_time_function_d2gaussB(t_used,f0_source(i_source))
+              source_time_function(i_source,it,i_stage) = - factor(i_source) * &
+                         comp_source_time_function_d2Gaussian(t_used,f0_source(i_source))
             else
               ! Gaussian or Dirac (we use a very thin Gaussian instead) source time function
-              source_time_function(i_source,it,i_stage) = factor(i_source) * &
-                          comp_source_time_function_gaussB(t_used,f0_source(i_source))
+              source_time_function(i_source,it,i_stage) = - factor(i_source) * &
+                          comp_source_time_function_Gaussian(t_used,f0_source(i_source))
             endif
 
           case (5)
@@ -250,11 +274,12 @@
             hdur = 1.d0 / f0_source(i_source)
             hdur_gauss = hdur * 5.d0 / 3.d0
 
-            ! convert the half duration for triangle STF to the one for gaussian STF
+            ! convert the half duration for triangle STF to the one for Gaussian STF
             hdur_gauss = hdur_gauss / SOURCE_DECAY_MIMIC_TRIANGLE
 
             ! quasi-Heaviside
-            source_time_function(i_source,it,i_stage) = factor(i_source) * comp_source_time_function_heavi(t_used,hdur_gauss)
+            source_time_function(i_source,it,i_stage) = - factor(i_source) * &
+                                    comp_source_time_function_heaviside_hdur(t_used,hdur_gauss)
 
           case (6)
             ! ocean acoustics type I
@@ -267,7 +292,7 @@
               omegat =  omega_coa * ( timeval - DecT )
               source_time_function(i_source,it,i_stage) = factor(i_source) * HALF * &
                     sin( omegat ) * ( ONE - cos( QUARTER * omegat ) )
-              !source_time_function(i_source,it,i_stage) = - factor(i_source) * HALF / omega_coa / omega_coa * &
+              !source_time_function(i_source,it,i_stage) = factor(i_source) * HALF / omega_coa / omega_coa * &
               !      ( sin(omegat) - 8.d0 / 9.d0 * sin(3.d0/ 4.d0 * omegat) - 8.d0 / 25.d0 * sin(5.d0 / 4.d0 * omegat) )
             else
               source_time_function(i_source,it,i_stage) = ZERO
@@ -278,7 +303,7 @@
             DecT = t0 + tshift_src(i_source)
             Tc = 4.d0 / f0_source(i_source) + DecT
             omega_coa = TWO*PI*f0_source(i_source)
-            if (USE_TRICK_FOR_BETTER_PRESSURE) then !TODO
+            if (USE_TRICK_FOR_BETTER_PRESSURE) then
               ! use a trick to increase accuracy of pressure seismograms in fluid (acoustic) elements:
               ! use the second derivative of the source for the source time function instead of the source itself,
               ! and then record -potential_acoustic() as pressure seismograms instead of -potential_dot_dot_acoustic();
@@ -312,7 +337,7 @@
                         8.d0 / 25.d0 * sin(5.d0 / 4.d0 * omegat) - 1.d0 / 15.d0 * omegat )
               else if (timeval > DecT) then
                 source_time_function(i_source,it,i_stage) = &
-                - factor(i_source) * HALF / omega_coa / 15.d0 * (4.d0 / f0_source(i_source))
+                       - factor(i_source) * HALF / omega_coa / 15.d0 * (4.d0 / f0_source(i_source))
               else
                 source_time_function(i_source,it,i_stage) = ZERO
               endif
@@ -327,7 +352,7 @@
 !                        8.d0 / 25.d0 * sin(5.d0 / 4.d0 * omegat) - 1.d0 / 15.d0 * omegat )
 !              else if (timeval > DecT) then
 !                source_time_function(i_source,it,i_stage) = &
-!                - factor(i_source) * HALF / omega_coa / 15.d0 * (4.d0 / f0_source(i_source))
+!                       - factor(i_source) * HALF / omega_coa / 15.d0 * (4.d0 / f0_source(i_source))
 !              else
 !                source_time_function(i_source,it,i_stage) = ZERO
 !              endif
@@ -337,17 +362,33 @@
             ! external type
             ! opens external file to read in source time function
             if (it == 1) then
-              coeff = factor(i_source)
-              error_msg = error_msg1//trim(name_of_source_file(i_source))
-              open(unit=num_file,file=trim(name_of_source_file(i_source)),iostat=ier)
-              if (ier /= 0 ) call exit_MPI(myrank,error_msg)
+              ! reads in from external source time function file
+              open(unit=num_file,file=trim(name_of_source_file(i_source)),status='old',action='read',iostat=ier)
+              if (ier /= 0) then
+                print *,'Error opening source time function file: ',trim(name_of_source_file(i_source))
+                error_msg = trim(error_msg1)//trim(name_of_source_file(i_source))
+                call exit_MPI(myrank,error_msg)
+              endif
             endif
 
+            ! reads in 2-column file values (time value in first column will be ignored)
             ! format: #time #stf-value
-            read(num_file,*) time, source_time_function(i_source,it,i_stage)
+            read(num_file,*,iostat=ier) dummy_t, source_time_function(i_source,it,i_stage)
+            if (ier /= 0) then
+              print *,'Error reading source time function file: ',trim(name_of_source_file(i_source)),' at line ',it
+              print *,'Please make sure the file contains the same number of lines as the number of timesteps NSTEP ',NSTEP
+              call exit_MPI(myrank,'Error reading source time function file')
+            endif
 
             ! closes external file
-            if (it == NSTEP ) close(num_file)
+            if (it == NSTEP) close(num_file)
+
+            ! amplifies STF by factor
+            ! note: the amplification factor will amplify the external source time function.
+            !       in case this is not desired, one just needs to set the amplification factor to 1 in DATA/SOURCE:
+            !         factor  = 1.0
+            coeff = factor(i_source)
+            source_time_function(i_source,it,i_stage) = source_time_function(i_source,it,i_stage) * coeff
 
           case (9)
             ! burst type
@@ -427,6 +468,12 @@
               source_time_function(i_source,it,i_stage) = factor(i_source) * sin(omega_coa*t_used)
             endif
 
+          case (11)
+              ! Marmousi_ormsby_wavelet
+              hdur = 1.0 / 35.0
+              source_time_function(i_source,it,i_stage) = factor(i_source) * &
+                        cos_taper(t_used,hdur) * marmousi_ormsby_wavelet(PI*t_used)
+
           case default
             call exit_MPI(myrank,'unknown source time function')
 
@@ -436,11 +483,9 @@
           if (i_source == 1 .and. i_stage == 1) then
             stf_used = source_time_function(i_source,it,i_stage)
 
-            ! note: earliest start time of the simulation is: (it-1)*deltat - t0 - tshift_src(i_source)
-            write(55,"(E14.7,A,E14.7)") sngl(timeval-t0)," ",sngl(stf_used) !," ",sngl(timeval)
+            ! note: earliest start time of the simulation is: (it-1)*DT - t0 - tshift_src(i_source)
+            if (myrank == islice_selected_source(1)) write(55,*) timeval-t0,' ',stf_used
 
-            ! output relative time in third column, in case user wants to check it as well
-            ! write(55,*) sngl(t_used),sngl(stf_used),sngl(timeval)
           endif
         endif
       enddo
@@ -449,6 +494,8 @@
 
   ! closes STF file
   if (myrank == islice_selected_source(1)) close(55)
+
+  !print *,"myrank:",myrank,"Ok"
 
   ! synchronizes all processes
   call synchronize_all()

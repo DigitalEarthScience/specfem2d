@@ -109,8 +109,8 @@
   logical imeshcolor, imodelvect, iboundvect, interpol, isymbols, initialfield
   logical usletter,compenergy
 
-  print *,'Nombre d''elements = ',nelem
-  print *,'Nombre max de points = ',npoin
+  print *,'Number of elements = ',nelem
+  print *,'Max number of points = ',npoin
 
   nx = mnx
   nz = mnz
@@ -127,7 +127,7 @@
   do i=0,4*nx
 
 ! --- point de depart
-  if(i < 2*nx) then
+  if (i < 2*nx) then
       x1(i,0) = 2.*R * dble(i) / dble(2*nx)
       z1(i,0) = - 2.*R
   else
@@ -152,7 +152,7 @@
   do i=0,2*nx
     do j=0,4*nz
       x3(i,j) = 5. * dble(i) / dble(2*nx) + 2.
-      if(j <= 2*nz) then
+      if (j <= 2*nz) then
         z3(i,j) = 7. * dble(j) / dble(2*nz) - 9.
       else
         z3(i,j) = 2. * dble(j-2*nz) / dble(2*nz) - 2.
@@ -220,7 +220,7 @@
   do i=0,4*nx
     do j=0,4*nz
       x3b(i,j) = 10. * dble(i) / dble(4*nx) - 12.
-      if(j <= 2*nz) then
+      if (j <= 2*nz) then
         z3b(i,j) = 7. * dble(j) / dble(2*nz) - 9.
       else
         z3b(i,j) = 2. * dble(j-2*nz) / dble(2*nz) - 2.
@@ -554,7 +554,7 @@
     enddo
   enddo
 
-  print *,'nb d''elements stockes = ',numerocourant - 1
+  print *,'Number of elements stored = ',numerocourant - 1
 
 ! ***
 ! *** creation des elements sous forme topologique
@@ -568,7 +568,7 @@
 ! recherche point 1
       do j=1,npoin
         dist = sqrt((x1e(i)-xpoint(j))**2 + (z1e(i)-zpoint(j))**2)
-        if(dist <= rseuil) then
+        if (dist <= rseuil) then
             nump1 = j
             goto 401
         endif
@@ -579,7 +579,7 @@
 ! recherche point 2
       do j=1,npoin
         dist = sqrt((x2e(i)-xpoint(j))**2 + (z2e(i)-zpoint(j))**2)
-        if(dist <= rseuil) then
+        if (dist <= rseuil) then
             nump2 = j
             goto 402
         endif
@@ -590,7 +590,7 @@
 ! recherche point 3
       do j=1,npoin
         dist = sqrt((x3e(i)-xpoint(j))**2 + (z3e(i)-zpoint(j))**2)
-        if(dist <= rseuil) then
+        if (dist <= rseuil) then
             nump3 = j
             goto 403
         endif
@@ -601,7 +601,7 @@
 ! recherche point 4
       do j=1,npoin
         dist = sqrt((x4e(i)-xpoint(j))**2 + (z4e(i)-zpoint(j))**2)
-        if(dist <= rseuil) then
+        if (dist <= rseuil) then
             nump4 = j
             goto 404
         endif
@@ -777,10 +777,10 @@
 
   write(15,*) 'Receivers (number, angle, position in meters)'
   do irec=1,nrec
-  if(irec <= nrecsur3) then
+  if (irec <= nrecsur3) then
     xrec = 2.*dble(irec-1)/dble(nrecsur3-1) + 9.
     zrec = 9.
-  else if(irec >= 2*nrecsur3) then
+  else if (irec >= 2*nrecsur3) then
     xrec = 2.*dble(irec-2*nrecsur3)/dble(nrecsur3) + 13.
     zrec = 9.
   else

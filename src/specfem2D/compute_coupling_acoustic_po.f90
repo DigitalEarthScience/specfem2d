@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -35,19 +35,25 @@
 
  subroutine compute_coupling_acoustic_po()
 
-  use constants,only: CUSTOM_REAL,NGLLX,NGLLZ,NGLJ,CPML_X_ONLY,CPML_Z_ONLY,IRIGHT,ILEFT,IBOTTOM,ITOP,ONE
+  use constants, only: CUSTOM_REAL,NGLLX,NGLLZ,NGLJ,CPML_X_ONLY,CPML_Z_ONLY,IRIGHT,ILEFT,IBOTTOM,ITOP,ONE, &
+                       USE_A_STRONG_FORMULATION_FOR_E1
 
-  use specfem_par, only: num_fluid_poro_edges,ibool,wxgll,wzgll,xix,xiz,&
-                         gammax,gammaz,jacobian,ivalue,jvalue,ivalue_inverse,jvalue_inverse,&
+  use specfem_par, only: num_fluid_poro_edges,ibool,wxgll,wzgll,xix,xiz, &
+                         gammax,gammaz,jacobian,ivalue,jvalue,ivalue_inverse,jvalue_inverse, &
                          fluid_poro_acoustic_ispec,fluid_poro_acoustic_iedge, &
-                         fluid_poro_poroelastic_ispec,fluid_poro_poroelastic_iedge, &
-                         displs_poroelastic,displw_poroelastic, &
-                         accels_poroelastic_adj_coupling,accelw_poroelastic_adj_coupling,&
-                         potential_dot_dot_acoustic,SIMULATION_TYPE
+                         fluid_poro_poroelastic_ispec,fluid_poro_poroelastic_iedge
+
+  use specfem_par, only: displs_poroelastic,displw_poroelastic, &
+                         !accels_poroelastic_adj_coupling,accelw_poroelastic_adj_coupling, &
+                         accels_poroelastic,accelw_poroelastic, &
+                         potential_dot_dot_acoustic,SIMULATION_TYPE, &
+                         ATTENUATION_VISCOACOUSTIC
+
+  use specfem_par, only: dot_e1
 
   implicit none
 
-  !local variable
+  ! local variables
   integer :: inum,ispec_acoustic,iedge_acoustic,ispec_poroelastic,iedge_poroelastic, &
              ipoin1D,i,j,iglob
   real(kind=CUSTOM_REAL) :: displ_x,displ_z,displw_x,displw_z,displ_n, &
@@ -72,19 +78,22 @@
       j = jvalue_inverse(ipoin1D,iedge_poroelastic)
       iglob = ibool(i,j,ispec_poroelastic)
 
-      displ_x = displs_poroelastic(1,iglob)
-      displ_z = displs_poroelastic(2,iglob)
+      ! displacement from poroelastic domain
+      if (SIMULATION_TYPE /= 3) then
+        ! forward and pure adjoint simulations
+        displ_x = displs_poroelastic(1,iglob)    ! solid
+        displ_z = displs_poroelastic(2,iglob)
 
-      displw_x = displw_poroelastic(1,iglob)
-      displw_z = displw_poroelastic(2,iglob)
-
-      if (SIMULATION_TYPE == 3) then
+        displw_x = displw_poroelastic(1,iglob)   ! fluid
+        displw_z = displw_poroelastic(2,iglob)
+      else
+        ! kernel simulations
         ! new definition of adjoint displacement and adjoint potential
-        displ_x = accels_poroelastic_adj_coupling(1,iglob)
-        displ_z = accels_poroelastic_adj_coupling(2,iglob)
+        displ_x = - accels_poroelastic(1,iglob) ! accels_poroelastic_adj_coupling(1,iglob)
+        displ_z = - accels_poroelastic(2,iglob) ! accels_poroelastic_adj_coupling(2,iglob)
 
-        displw_x = accelw_poroelastic_adj_coupling(1,iglob)
-        displw_z = accelw_poroelastic_adj_coupling(2,iglob)
+        displw_x =  - accelw_poroelastic(1,iglob) ! accelw_poroelastic_adj_coupling(1,iglob)
+        displw_z =  - accelw_poroelastic(2,iglob) ! accelw_poroelastic_adj_coupling(2,iglob)
       endif
 
       ! get point values for the acoustic side
@@ -111,14 +120,14 @@
         nx = + zxi / jacobian1D
         nz = - xxi / jacobian1D
         weight = jacobian1D * wxgll(i)
-      else if (iedge_acoustic ==ILEFT) then
+      else if (iedge_acoustic == ILEFT) then
         xgamma = - xiz(i,j,ispec_acoustic) * jacobian(i,j,ispec_acoustic)
         zgamma = + xix(i,j,ispec_acoustic) * jacobian(i,j,ispec_acoustic)
         jacobian1D = sqrt(xgamma**2 + zgamma**2)
         nx = - zgamma / jacobian1D
         nz = + xgamma / jacobian1D
         weight = jacobian1D * wzgll(j)
-      else if (iedge_acoustic ==IRIGHT) then
+      else if (iedge_acoustic == IRIGHT) then
         xgamma = - xiz(i,j,ispec_acoustic) * jacobian(i,j,ispec_acoustic)
         zgamma = + xix(i,j,ispec_acoustic) * jacobian(i,j,ispec_acoustic)
         jacobian1D = sqrt(xgamma**2 + zgamma**2)
@@ -130,20 +139,25 @@
       ! compute dot product [u_s + u_w]*n
       displ_n = (displ_x + displw_x)*nx + (displ_z + displw_z)*nz
       potential_dot_dot_acoustic(iglob) = potential_dot_dot_acoustic(iglob) + weight*displ_n
+
+      if (ATTENUATION_VISCOACOUSTIC .and. .not. USE_A_STRONG_FORMULATION_FOR_E1) &
+          dot_e1(iglob,:) = dot_e1(iglob,:) + weight*displ_n
+
     enddo
   enddo
 
  end subroutine compute_coupling_acoustic_po
 
 !========================================================================
+
 ! for acoustic solver
 
  subroutine compute_coupling_acoustic_po_backward()
 
-  use constants,only: CUSTOM_REAL,NGLLX,NGLLZ,NGLJ,CPML_X_ONLY,CPML_Z_ONLY,IRIGHT,ILEFT,IBOTTOM,ITOP,ONE
+  use constants, only: CUSTOM_REAL,NGLLX,NGLLZ,NGLJ,CPML_X_ONLY,CPML_Z_ONLY,IRIGHT,ILEFT,IBOTTOM,ITOP,ONE
 
-  use specfem_par, only: num_fluid_poro_edges,ibool,wxgll,wzgll,xix,xiz,&
-                         gammax,gammaz,jacobian,ivalue,jvalue,ivalue_inverse,jvalue_inverse,&
+  use specfem_par, only: num_fluid_poro_edges,ibool,wxgll,wzgll,xix,xiz, &
+                         gammax,gammaz,jacobian,ivalue,jvalue,ivalue_inverse,jvalue_inverse, &
                          fluid_poro_acoustic_ispec,fluid_poro_acoustic_iedge, &
                          fluid_poro_poroelastic_ispec,fluid_poro_poroelastic_iedge, &
                          b_displs_poroelastic,b_displw_poroelastic, &
@@ -206,14 +220,14 @@
         nx = + zxi / jacobian1D
         nz = - xxi / jacobian1D
         weight = jacobian1D * wxgll(i)
-      else if (iedge_acoustic ==ILEFT) then
+      else if (iedge_acoustic == ILEFT) then
         xgamma = - xiz(i,j,ispec_acoustic) * jacobian(i,j,ispec_acoustic)
         zgamma = + xix(i,j,ispec_acoustic) * jacobian(i,j,ispec_acoustic)
         jacobian1D = sqrt(xgamma**2 + zgamma**2)
         nx = - zgamma / jacobian1D
         nz = + xgamma / jacobian1D
         weight = jacobian1D * wzgll(j)
-      else if (iedge_acoustic ==IRIGHT) then
+      else if (iedge_acoustic == IRIGHT) then
         xgamma = - xiz(i,j,ispec_acoustic) * jacobian(i,j,ispec_acoustic)
         zgamma = + xix(i,j,ispec_acoustic) * jacobian(i,j,ispec_acoustic)
         jacobian1D = sqrt(xgamma**2 + zgamma**2)

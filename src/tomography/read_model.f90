@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -31,12 +31,11 @@
 !
 !========================================================================
 
-
 subroutine read_model_nspec()
 
 ! reads in nspec from database
 
-  use tomography_par,only: MAX_STRING_LEN,IIN,NSPEC,myrank
+  use tomography_par, only: MAX_STRING_LEN,IIN,NSPEC,myrank
 
   implicit none
 
@@ -57,15 +56,15 @@ subroutine read_model_nspec()
 
   ! reads lines until nspec
   read(IIN) dummy  ! simulation_title
-  read(IIN) idummy,idummy,ldummy,ldummy  ! SIMULATION_TYPE, NOISE_TOMOGRAPHY, SAVE_FORWARD, UNDO_ATTENUATION
+  read(IIN) idummy,idummy,ldummy,ldummy  ! SIMULATION_TYPE, NOISE_TOMOGRAPHY, SAVE_FORWARD, UNDO_ATTENUATION_AND_OR_PML
   read(IIN) nspec
 
   close(IIN)
 
   ! user output
   if (myrank == 0) then
-    print *,'number of spectral-elements: ',nspec
-    print *,''
+    print *,'number of spectral elements: ',nspec
+    print *
   endif
 
 end subroutine read_model_nspec

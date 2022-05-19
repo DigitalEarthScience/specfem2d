@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -31,15 +31,15 @@
 !
 !=====================================================================
 
-  subroutine compute_interpolated_dva(irec,ispec,vector_field_element,pressure_element,curl_element, &
-                                      vx,vz,vcurl)
+  subroutine compute_interpolated_dva(irecloc,ispec,vector_field_element,pressure_element,curl_element, &
+                                      vx,vz,vcurl,seismotype_l)
 
-  use constants,only: CUSTOM_REAL,NDIM,NGLLX,NGLLZ
-  use specfem_par,only: hxir_store,hgammar_store,ibool,seismotype
+  use constants, only: CUSTOM_REAL,NDIM,NGLLX,NGLLZ
+  use specfem_par, only: xir_store_loc,gammar_store_loc,ibool
 
   implicit none
 
-  integer,intent(in) :: irec,ispec
+  integer,intent(in) :: irecloc,ispec,seismotype_l
   real(kind=CUSTOM_REAL), dimension(NDIM,NGLLX,NGLLZ),intent(in) :: vector_field_element
   real(kind=CUSTOM_REAL), dimension(NGLLX,NGLLZ),intent(in) :: pressure_element
   real(kind=CUSTOM_REAL), dimension(NGLLX,NGLLZ),intent(in) :: curl_element
@@ -58,10 +58,11 @@
   do j = 1,NGLLZ
     do i = 1,NGLLX
       iglob = ibool(i,j,ispec)
-      hlagrange = hxir_store(irec,i)*hgammar_store(irec,j)
+      hlagrange = xir_store_loc(irecloc,i)*gammar_store_loc(irecloc,j)
 
-      ! displacement/velocity/acceleration/pressure value (depending on seismotype)
-      select case (seismotype)
+      ! displacement/velocity/acceleration/pressure value (depending on seismotype_l)
+      select case (seismotype_l)
+
       case (1,2,3)
         ! displacement/velocity/acceleration
         dxd = vector_field_element(1,i,j)
@@ -88,11 +89,9 @@
         vcurl = vcurl + dcurld*hlagrange
 
       case default
-        stop 'Invalid seismotype for writing seismograms'
+        call stop_the_code('Invalid seismotype for writing seismograms')
       end select
     enddo
   enddo
 
   end subroutine compute_interpolated_dva
-
-

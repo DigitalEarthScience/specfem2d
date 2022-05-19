@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -83,25 +83,25 @@
   enddo
 
 ! Test values to see if they fit valid ranges
-  if (yr < 1980) stop 'Error in convtime: year out of range, must be >= 1980'
+  if (yr < 1980) call stop_the_code('Error in convtime: year out of range, must be >= 1980')
 
-  if (mon < 1 .or. mon > 12) stop 'Error in convtime: month out of range (1-12)'
+  if (mon < 1 .or. mon > 12) call stop_the_code('Error in convtime: month out of range (1-12)')
 
   if (mon == 2) then
    if (is_leap_year(yr) .and. (day < 1 .or. day > 29)) then
-      stop 'Error in convtime: February day out of range (1-29)'
+      call stop_the_code('Error in convtime: February day out of range (1-29)')
    else if (.not. is_leap_year(yr) .and. (day < 1 .or. day > 28)) then
-      stop 'Error in convtime: February day out of range (1-28)'
+      call stop_the_code('Error in convtime: February day out of range (1-28)')
    endif
   else if (mon == 4 .or. mon == 6 .or. mon == 9 .or. mon == 11) then
-   if (day < 1 .or. day > 30) stop 'Error in convtime: day out of range (1-30)'
+   if (day < 1 .or. day > 30) call stop_the_code('Error in convtime: day out of range (1-30)')
   else
-   if (day < 1 .or. day > 31) stop 'Error in convtime: day out of range (1-31)'
+   if (day < 1 .or. day > 31) call stop_the_code('Error in convtime: day out of range (1-31)')
   endif
 
-  if (hr < 0 .or. hr > 23) stop 'Error in convtime: hour out of range (0-23)'
+  if (hr < 0 .or. hr > 23) call stop_the_code('Error in convtime: hour out of range (0-23)')
 
-  if (minvalue < 0 .or. minvalue > 60) stop 'Error in convtime: minute out of range (0-60)'
+  if (minvalue < 0 .or. minvalue > 60) call stop_the_code('Error in convtime: minute out of range (0-60)')
 
 ! convert time (test if leap year)
   if (is_leap_year(yr)) then
@@ -166,7 +166,7 @@
 ! OK, let us invert the effects of the years: subtract off the
 ! number of minutes per year until it goes negative
 ! iyr then gives the year that the time (in minutes) occurs
-  if (timestamp >= year(MAX_YEAR)) stop 'year too high in invtime'
+  if (timestamp >= year(MAX_YEAR)) call stop_the_code('year too high in invtime')
 
   iyr=1979
   itime=timestamp

@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -31,31 +31,6 @@
 !
 !========================================================================
 
-
-  module source_file_par
-
-  use constants,only: MAX_STRING_LEN
-
-  implicit none
-
-  ! source type parameters
-  integer, dimension(:),allocatable ::  source_type,time_function_type
-  ! location
-  double precision, dimension(:),allocatable :: xs,zs
-  ! moment tensor
-  double precision, dimension(:),allocatable :: Mxx,Mzz,Mxz
-  ! source parameters
-  double precision, dimension(:),allocatable :: f0_source,tshift_src,anglesource,factor,burst_band_width
-  ! flag for fixation to surface
-  logical, dimension(:),allocatable ::  source_surf
-  ! File name can't exceed MAX_STRING_LEN characters
-  character(len=MAX_STRING_LEN), dimension(:),allocatable :: name_of_source_file
-
-  end module source_file_par
-
-!
-!---------------------------------------------------------------------------------------
-!
 
   module decompose_par
 
@@ -76,21 +51,17 @@
 ! This module contains subroutines related to unstructured meshes and partitioning of the
 ! corresponding graphs.
 
-  use shared_parameters,only: nelmnts,nxread,nzread, &
-    max_npoints_interface,number_of_interfaces, &
-    nz_layer,number_of_layers, &
-    nx,nz
+  use shared_parameters, only: nelmnts,nxread,nzread,max_npoints_interface,number_of_interfaces, &
+    nz_layer,number_of_layers,nx_elem_internal,nz_elem_internal
 
   implicit none
 
   integer, dimension(:), allocatable  :: elmnts
   integer, dimension(:), allocatable  :: elmnts_bis
-  integer, dimension(:), allocatable  :: vwgt
   integer, dimension(:), allocatable  :: glob2loc_elmnts
   integer, dimension(:), allocatable  :: part
 
   integer :: nb_edges
-  integer, dimension(:), allocatable  :: adjwgt
 
   integer, dimension(:), allocatable  :: xadj_g
   integer, dimension(:), allocatable  :: adjncy_g
@@ -165,8 +136,8 @@
   integer :: nedges_acporo_coupled_loc
   integer :: nedges_elporo_coupled_loc
 
-  ! to store the position of pml element in array region_pml_external_mesh
-  ! this is only useful when using pml together with external mesh
+  ! to store the position of PML element in array region_pml_external_mesh
+  ! this is only useful when using PML together with external mesh
   integer, dimension(:), allocatable :: region_pml_external_mesh
 
   integer :: remove_min_to_start_at_zero

@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -33,7 +33,7 @@
 
   subroutine lagrange_any(xi,NGLL,xigll,h,hprime)
 
-! subroutine to compute the Lagrange interpolants based upon the GLL points
+! subroutine to compute the Lagrange interpolants based upon the interpolation points
 ! and their first derivatives at any point xi in [-1,1]
 
   implicit none
@@ -97,7 +97,7 @@
 !
 
 ! subroutine to compute the derivative of the Lagrange interpolants
-! at the GLL points at any given GLL point
+! at any given GLL point
 
   double precision function lagrange_deriv_GLL(i,j,ZGLL,NZ)
 
@@ -145,8 +145,13 @@
 !
 !  Compute the value of the Lagrangian interpolant L through
 !  the NZ Gauss-Lobatto Legendre points ZGLL at point Z
+!  See Nissen-Meyer et al., 2007, A two-dimensional spectral-element method for computing
+!  spherical-earth seismograms - I. Moment-tensor source, Geophysical Journal International, p. 1087 eq. (A19)
+!  !! Warning !! There is a minus sign missing in that paper (-1.d0)**(N+1)*(1.d0-Z)*PNDLEG(Z,N) / ALFAN
 !
 !-------------------------------------------------------------
+
+  use constants, only: TINYVAL
 
   implicit none
 
@@ -158,7 +163,7 @@
   double precision EPS,DZ,ALFAN
   double precision, external :: PNLEG,PNDLEG
 
-  EPS = 1.d-5
+  EPS = TINYVAL
   DZ = Z - ZGLL(I)
   if (abs(DZ) < EPS) then
    HGLL = 1.d0
@@ -166,7 +171,13 @@
   endif
   N = NZ - 1
   ALFAN = dble(N)*(dble(N)+1.d0)
-  HGLL = - (1.d0-Z*Z)*PNDLEG(Z,N)/ (ALFAN*PNLEG(ZGLL(I),N)*(Z-ZGLL(I)))
+  if (I == 0) then
+    HGLL = (-1.d0)**(N+1)*(1.d0-Z)*PNDLEG(Z,N) / ALFAN
+  else if (I == N) then
+    HGLL = (1.d0+Z)*PNDLEG(Z,N) / ALFAN
+  else
+    HGLL = - (1.d0-Z*Z)*PNDLEG(Z,N)/ (ALFAN*PNLEG(ZGLL(I),N)*(Z-ZGLL(I)))
+  endif
 
   end function hgll
 
@@ -180,8 +191,12 @@
 !
 !  Compute the value of the Lagrangian interpolant L through
 !  the NZ Gauss-Lobatto Jacobi points ZGLJ at point Z
+! See Nissen-Meyer et al., 2007, A two-dimensional spectral-element method for computing
+! spherical-earth seismograms - I. Moment-tensor source, Geophysical Journal International, p. 1088 eq. (A26)
 !
 !-------------------------------------------------------------
+
+  use constants, only: TINYVAL
 
   implicit none
 
@@ -190,18 +205,25 @@
   double precision ZGLJ(0:nz-1)
 
   integer n
-  double precision EPS,DZ,ALFAN
+  double precision EPS,DZ,ALFAN1,ALFAN2
   double precision, external :: PNGLJ,PNDGLJ
 
-  EPS = 1.d-5
+  EPS = TINYVAL
   DZ = Z - ZGLJ(I)
   if (abs(DZ) < EPS) then
    HGLJ = 1.d0
    return
   endif
   N = NZ - 1
-  ALFAN = dble(N)*(dble(N)+2.d0)
-  HGLJ = - (1.d0-Z*Z)*PNDGLJ(Z,N)/ (ALFAN*PNGLJ(ZGLJ(I),N)*(Z-ZGLJ(I)))
+  ALFAN1 = dble(N)+1.d0
+  ALFAN2 = dble(N)*(dble(N)+2.d0)
+  if (I == 0) then
+    HGLJ = 2.d0*(-1.d0)**N*(Z-1.0d0)*PNDGLJ(Z,N) / (ALFAN1*ALFAN2)
+  else if (I == N) then
+    HGLJ = (1.d0+Z)*PNDGLJ(Z,N) / ALFAN2
+  else
+    HGLJ = - (1.d0-Z*Z)*PNDGLJ(Z,N) / (ALFAN2*PNGLJ(ZGLJ(I),N)*(Z-ZGLJ(I)))
+  endif
 
   end function hglj
 
@@ -217,9 +239,13 @@
 
 !------------------------------------------------------------------------
 !
-!     Compute the value of the derivative of the I-th
-!     polynomial interpolant of the GLJ quadrature through the
-!     NZ Gauss-Lobatto-Jacobi (0,1) points ZGLJ at point ZGLJ(j)
+!  Compute the value of the derivative of the I-th
+!  polynomial interpolant of the GLJ quadrature through the
+!  NZ Gauss-Lobatto-Jacobi (0,1) points ZGLJ at point ZGLJ(j)
+! See Nissen-Meyer et al., 2007, A two-dimensional spectral-element method for computing
+! spherical-earth seismograms - I. Moment-tensor source, Geophysical Journal International, p. 1088 eq. (A27)
+!  WARNING: there is an error at line 7 of their equation
+!  \partial_{\xi}\overline{l}_{i}(\overline{\xi}_{I})=\dfrac{1}{\overline{P}_{N}(\overline{\xi}_{i})(1-\overline{\xi}_{i})}
 !
 !------------------------------------------------------------------------
 
@@ -255,7 +281,7 @@
   else if (i == degpoly .and. j == degpoly) then ! Case 10
     poly_deriv_GLJ = (dble(degpoly)*(dble(degpoly)+2.d0)-1.d0)/4.d0
   else
-    stop 'Problem in poly_deriv_GLJ: in a perfect world this would NEVER appear'
+    call stop_the_code('Problem in poly_deriv_GLJ: in a perfect world this would NEVER appear')
   endif
 
   end function poly_deriv_GLJ

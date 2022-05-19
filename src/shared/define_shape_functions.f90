@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -31,7 +31,7 @@
 !
 !========================================================================
 
-  subroutine define_shape_functions(shape2D,dershape2D,xi,gamma,ngnod)
+  subroutine define_shape_functions(shape2D,dershape2D,xi,gamma,NGNOD)
 
 !=======================================================================
 !
@@ -55,14 +55,14 @@
 !
 !=======================================================================
 
-  use constants,only: QUARTER,HALF,ONE,TWO,TINYVAL,NDIM
+  use constants, only: QUARTER,HALF,ONE,TWO,TINYVAL,NDIM
 
   implicit none
 
-  integer,intent(in) :: ngnod
+  integer,intent(in) :: NGNOD
 
-  double precision,intent(out) :: shape2D(ngnod)
-  double precision,intent(out) :: dershape2D(NDIM,ngnod)
+  double precision,intent(out) :: shape2D(NGNOD)
+  double precision,intent(out) :: dershape2D(NDIM,NGNOD)
   double precision,intent(in) :: xi,gamma
 
   ! local parameters
@@ -75,7 +75,7 @@
   t  = gamma
 
 !----    4-node element
-  if (ngnod == 4) then
+  if (NGNOD == 4) then
        sp = s + ONE
        sm = s - ONE
        tp = t + ONE
@@ -98,7 +98,7 @@
        dershape2D(2,4) = - QUARTER * sm
 
 !----    9-node element
-  else if (ngnod == 9) then
+  else if (NGNOD == 9) then
 
        sp = s + ONE
        sm = s - ONE
@@ -149,16 +149,16 @@
        dershape2D(2,9) = -ONE * t2 * (ONE - ss)
 
   else
-     stop 'Error: wrong number of control nodes'
+     call stop_the_code('Error: wrong number of control nodes')
   endif
 
 !--- check the shape functions and their derivatives
   ! sum of shape functions should be one
-  if (abs(sum(shape2D)-ONE) > TINYVAL) stop 'Error shape functions'
+  if (abs(sum(shape2D)-ONE) > TINYVAL) call stop_the_code('Error shape functions')
 
   ! sum of derivatives of shape functions should be zero
-  if (abs(sum(dershape2D(1,:))) > TINYVAL) stop 'Error deriv xi shape functions'
-  if (abs(sum(dershape2D(2,:))) > TINYVAL) stop 'Error deriv gamma shape functions'
+  if (abs(sum(dershape2D(1,:))) > TINYVAL) call stop_the_code('Error deriv xi shape functions')
+  if (abs(sum(dershape2D(2,:))) > TINYVAL) call stop_the_code('Error deriv gamma shape functions')
 
   end subroutine define_shape_functions
 

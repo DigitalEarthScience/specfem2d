@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -90,21 +90,21 @@ program adj_seismogram
 
   ! user output
   print *,'adjoint source - seismogram:'
-  print *,''
+  print *
   print *,'parameters:'
   print *,'  NSTEP  = ',NSTEP
   print *,'  deltat = ',deltat
   print *,'  nrec   = ',nrec
   print *,'  t0     = ',t0
-  print *,''
+  print *
   print *,'setup:'
   print *,'  seismogram components   = ',NDIMr
   print *,'  seismogram labels       = ',compr(1),' / ',compr(2)
   print *,'  station name            = ',trim(station_name(1))
-  print *,''
+  print *
   print *,'  time window start/end                           = ',tstart(1),tend(1)
-  print *,'  adjoint source trace component (1==X/2==Y/3==Z) = ',adj_comp
-  print *,''
+  print *,'  adjoint source trace component (1 == X/2 == Y/3 == Z) = ',adj_comp
+  print *
 
   do irec = 1,nrec
 
@@ -165,7 +165,7 @@ program adj_seismogram
      print *,'istart =',istart, 'iend =', iend
      print *,'tstart =',istart*deltat, 'tend =', iend*deltat
 
-     if(istart >= iend) stop 'check istart,iend'
+     if (istart >= iend) stop 'check istart,iend'
      nlen = iend - istart +1
 
      do icomp = 1, NDIM
@@ -211,7 +211,7 @@ program adj_seismogram
 
         !Nnorm = deltat * sum(time_window(:) * seism_veloc(:) * seism_veloc(:))
 
-        if(abs(Nnorm) > EPS) then
+        if (abs(Nnorm) > EPS) then
            !ft_bar(:) = -seism_veloc(:) * time_window(:) / Nnorm
            ft_bar(:) = seism_veloc(:) * time_window(:) / Nnorm
            print *,'Norm =', Nnorm
@@ -222,7 +222,7 @@ program adj_seismogram
         endif
 
         do itime =1,NSTEP
-           if(icomp == adj_comp) then
+           if (icomp == adj_comp) then
               write(11,*) (itime-1)*deltat - t0, ft_bar(itime)
            else
               write(11,*) (itime-1)*deltat - t0, 0.d0

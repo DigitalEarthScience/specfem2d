@@ -4,11 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
-!               Pieyre Le Loher, pieyre DOT le-loher aT inria.fr
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -16,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -34,7 +33,7 @@
 
   subroutine compute_normal_vector( angle, n1_x, n2_x, n3_x, n4_x, n1_z, n2_z, n3_z, n4_z )
 
-  use constants,only: TINYVAL,PI
+  use constants, only: TINYVAL,PI
 
   implicit none
 

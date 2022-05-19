@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -61,8 +61,8 @@
   call zwgljd_cr(zigll,wzgll,NGLLZ,alphaGLL,betaGLL)
 
 ! if number of points is odd, the middle abscissa is exactly zero
-  if(mod(NGLLX,2) /= 0) xigll((NGLLX-1)/2+1) = 0._CUSTOM_REAL
-  if(mod(NGLLZ,2) /= 0) zigll((NGLLZ-1)/2+1) = 0._CUSTOM_REAL
+  if (mod(NGLLX,2) /= 0) xigll((NGLLX-1)/2+1) = 0._CUSTOM_REAL
+  if (mod(NGLLZ,2) /= 0) zigll((NGLLZ-1)/2+1) = 0._CUSTOM_REAL
 
 ! calculate derivatives of the Lagrange polynomials
 ! and precalculate some products in double precision

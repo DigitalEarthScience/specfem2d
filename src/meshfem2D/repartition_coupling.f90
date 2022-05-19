@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -31,15 +31,14 @@
 !
 !========================================================================
 
-
   !--------------------------------------------------
   ! repartitioning: coupled acoustic/elastic elements are transferred to the same partition
   !--------------------------------------------------
 
   subroutine acoustic_elastic_repartitioning(elmnts_l, nbmodels, phi_material, num_material, nproc)
 
-  use constants,only: IMAIN,NCORNERS,MAX_NEIGHBORS,TINYVAL
-  use part_unstruct_par,only: nelmnts,edges_coupled,nedges_coupled
+  use constants, only: IMAIN,NCORNERS,MAX_NEIGHBORS,TINYVAL
+  use part_unstruct_par, only: nelmnts,edges_coupled,nedges_coupled
 
   implicit none
 
@@ -92,7 +91,7 @@
   write(IMAIN,*) 'nedges_coupled (acoustic/elastic)     = ', nedges_coupled
 
   allocate(edges_coupled(2,nedges_coupled),stat=ier)
-  if (ier /= 0) stop 'Error allocating array edges_coupled'
+  if (ier /= 0) call stop_the_code('Error allocating array edges_coupled')
   edges_coupled(:,:) = 0
 
   ! repartitions elements
@@ -117,8 +116,8 @@
 
   subroutine acoustic_poro_repartitioning(elmnts_l, nbmodels, phi_material, num_material, nproc)
 
-  use constants,only: IMAIN,NCORNERS,MAX_NEIGHBORS,TINYVAL
-  use part_unstruct_par,only: nelmnts,edges_acporo_coupled,nedges_acporo_coupled
+  use constants, only: IMAIN,NCORNERS,MAX_NEIGHBORS,TINYVAL
+  use part_unstruct_par, only: nelmnts,edges_acporo_coupled,nedges_acporo_coupled
 
   implicit none
 
@@ -141,10 +140,10 @@
   is_poroelastic(:) = .false.
 
   do i = 1, nbmodels
-     if (phi_material(i) >=1.d0) then
+     if (phi_material(i) >= 1.d0) then
         is_acoustic(i) = .true.
      endif
-     if (phi_material(i) <1.d0 .and. phi_material(i) > TINYVAL) then
+     if (phi_material(i) < 1.d0 .and. phi_material(i) > TINYVAL) then
         is_poroelastic(i) = .true.
      endif
   enddo
@@ -167,7 +166,7 @@
   write(IMAIN,*) 'nedges_coupled (acoustic/poroelastic) = ', nedges_acporo_coupled
 
   allocate(edges_acporo_coupled(2,nedges_acporo_coupled),stat=ier)
-  if (ier /= 0) stop 'Error allocating array edges_acporo_coupled'
+  if (ier /= 0) call stop_the_code('Error allocating array edges_acporo_coupled')
   edges_acporo_coupled(:,:) = 0
 
   ! repartitions elements
@@ -191,8 +190,8 @@
 
   subroutine poro_elastic_repartitioning(elmnts_l, nbmodels, phi_material, num_material, nproc)
 
-  use constants,only: IMAIN,NCORNERS,MAX_NEIGHBORS,TINYVAL
-  use part_unstruct_par,only: nelmnts,nedges_elporo_coupled,edges_elporo_coupled
+  use constants, only: IMAIN,NCORNERS,MAX_NEIGHBORS,TINYVAL
+  use part_unstruct_par, only: nelmnts,nedges_elporo_coupled,edges_elporo_coupled
 
   implicit none
 
@@ -218,7 +217,7 @@
      if (phi_material(i) < TINYVAL) then
         is_elastic(i) = .true.
      endif
-     if (phi_material(i) <1.d0 .and. phi_material(i) > TINYVAL) then
+     if (phi_material(i) < 1.d0 .and. phi_material(i) > TINYVAL) then
         is_poroelastic(i) = .true.
      endif
   enddo
@@ -241,7 +240,7 @@
   write(IMAIN,*) 'nedges_coupled (poroelastic/elastic)  = ', nedges_elporo_coupled
 
   allocate(edges_elporo_coupled(2,nedges_elporo_coupled),stat=ier)
-  if (ier /= 0) stop 'Error allocating array edges_elporo_coupled'
+  if (ier /= 0) call stop_the_code('Error allocating array edges_elporo_coupled')
   edges_elporo_coupled(:,:) = 0
 
   ! repartitions elements
@@ -263,8 +262,8 @@
                                        num_material,nbmodels, &
                                        is_domain_A,is_domain_B,xadj_l,adjncy_l)
 
-  use constants,only: IMAIN,MAX_NEIGHBORS
-  use part_unstruct_par,only: nelmnts,part
+  use constants, only: IMAIN,MAX_NEIGHBORS
+  use part_unstruct_par, only: nelmnts,part
 
   implicit none
 
@@ -300,7 +299,7 @@
       enddo
     endif
   enddo
-  if (iedge /= nedges_coupled) stop 'Error in setting domain edges, number of edges invalid'
+  if (iedge /= nedges_coupled) call stop_the_code('Error in setting domain edges, number of edges invalid')
 
   ! only in case we have different partitions
   if (nproc > 1) then
@@ -334,7 +333,7 @@
       write(IMAIN,*) '  repartitioning edges left = ',i
       if (i /= 0) then
         write(IMAIN,*) 'Error: repartitioning edges has still edges left = ',i
-        stop 'Error: repartitioning coupled elements needs more iterations'
+        call stop_the_code('Error: repartitioning coupled elements needs more iterations')
       else
         ! for user output
         i = nedges_coupled * nproc
@@ -355,8 +354,8 @@
 
   subroutine periodic_edges_repartitioning(elmnts_l,nnodes,nodes_coords,PERIODIC_HORIZ_DIST)
 
-  use constants,only: IMAIN,NCORNERS
-  use part_unstruct_par,only: nelmnts,part
+  use constants, only: IMAIN,NCORNERS
+  use part_unstruct_par, only: nelmnts,part
 
   implicit none
 
@@ -403,7 +402,7 @@
   is_periodic(:) = .false.
 
 ! loop on all the elements
-  do el = 0, nelmnts-2 ! we stop one element before the end in order for the second loop to be OK in all cases
+  do el = 0, nelmnts-2 ! we call stop_the_code(one element before the end in order for the second loop to be OK in all cases)
     do el2 = el+1, nelmnts-1
       if (is_periodic(el2)) cycle
       ! it is sufficient to loop on the four corners to determine if this element has at least one periodic point
@@ -444,7 +443,8 @@
       exit
     endif
   enddo
-  if (ifirst_partition_found < 0) stop 'error: no periodic element found, even though ADD_PERIODIC_CONDITIONS is set'
+  if (ifirst_partition_found < 0) call stop_the_code( &
+'error: no periodic element found, even though ADD_PERIODIC_CONDITIONS is set')
 
   ! loop on all the elements to move all periodic elements to the first partition found
   do el = 0, nelmnts-1
@@ -452,4 +452,64 @@
   enddo
 
   end subroutine periodic_edges_repartitioning
+
+!
+!---------------------------------------------------------------------------------------
+!
+
+  subroutine manual_crack_repartitioning(num_material,NPROC)
+
+! puts elements along manual crack into the same partition
+!
+! note: For now, elements material numbers are hard-coded and must be 2 (for left side) and 3 (right side)
+!       to indicate an element along the crack.
+!       To split nodes, see routine in add_manual_crack.f90
+
+  use constants, only: IMAIN,NCORNERS,ADD_A_SMALL_CRACK_IN_THE_MEDIUM
+  use part_unstruct_par, only: nelmnts,part
+
+  implicit none
+
+  integer, intent(in) :: nproc
+  integer, dimension(1:nelmnts), intent(in)  :: num_material
+
+  ! local parameters
+  logical, dimension(0:nelmnts-1) :: is_crack_element
+  integer  :: ipartition_crack
+  integer  :: el
+
+  ! checks if anything to do
+  if (.not. ADD_A_SMALL_CRACK_IN_THE_MEDIUM) return
+
+  ! user output
+  write(IMAIN,*)
+  write(IMAIN,*) 'detecting elements for manual crack.'
+
+  ! sets flags for elements along the crack (material number 2 and 3)
+  is_crack_element(:) = .false.
+  ipartition_crack = nproc + 1
+  do el = 0, nelmnts-1
+    ! crack between material number 2 and 3
+    if (num_material(el+1) == 2 .or. num_material(el+1) == 3) then
+      is_crack_element(el) = .true.
+      ! puts all crack elements into lowest partition possible
+      if (part(el) < ipartition_crack) ipartition_crack = part(el)
+    endif
+  enddo
+
+  ! user output
+  write(IMAIN,*) 'number of crack elements ',count(is_crack_element),' found and grouped in the same partition ',ipartition_crack
+  call flush_IMAIN()
+
+  if (count(is_crack_element) == 0) &
+    call stop_the_code('Error: no crack element found, even though ADD_A_SMALL_CRACK_IN_THE_MEDIUM is set')
+  if (ipartition_crack > nproc) &
+    call stop_the_code('Error: invalid partition number for crack elements')
+
+  ! we will put all crack elements into the same partition
+  do el = 0, nelmnts-1
+    if (is_crack_element(el)) part(el) = ipartition_crack
+  enddo
+
+  end subroutine manual_crack_repartitioning
 

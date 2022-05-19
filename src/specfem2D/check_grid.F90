@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -35,7 +35,7 @@
 
 ! check the mesh, stability and number of points per wavelength
 
-  use constants,only: IMAIN,HUGEVAL,TINYVAL,ZERO
+  use constants, only: IMAIN,HUGEVAL,TINYVAL,ZERO,myrank
   use specfem_par
   use specfem_par_movie
 
@@ -48,28 +48,23 @@
   double precision :: vpIImax_local,vpIImin_local
   double precision :: vsmin,vsmax,densmin,densmax,vpImax_local,vpImin_local,vsmin_local,vsmax_local
 
-  double precision :: kappa_s,kappa_f,kappa_fr,mu_s,mu_fr,rho_s,rho_f,eta_f,phi,tort,rho_bar
-  double precision :: D_biot,H_biot,C_biot,M_biot
-
   double precision :: cpIloc,cpIIloc,csloc
-  double precision :: cpIsquare,cpIIsquare,cssquare
-  double precision :: f0,f0max,w_c,perm_xx
-  double precision :: denst
-  double precision :: lambdaplus2mu,mu
+  double precision :: f0,f0max
+  double precision :: mul,rhol
   double precision :: distance_min,distance_max,distance_min_local,distance_max_local
   double precision :: courant_stability_number_max,lambdaPImin,lambdaPImax,lambdaPIImin,lambdaPIImax,lambdaSmin,lambdaSmax
   double precision :: distance_1,distance_2,distance_3,distance_4
 
-! for the stability condition
-! maximum polynomial degree for which we can compute the stability condition
+  ! for the stability condition
+  ! maximum polynomial degree for which we can compute the stability condition
   integer, parameter :: NGLLX_MAX_STABILITY = 15
   double precision :: percent_GLL(NGLLX_MAX_STABILITY)
 
-! for slice totals
+  ! for slice totals
   double precision :: vpImin_glob,vpImax_glob,vsmin_glob,vsmax_glob,densmin_glob,densmax_glob
   double precision :: vpIImin_glob,vpIImax_glob
   double precision :: distance_min_glob,distance_max_glob
-  double precision :: courant_stability_max_glob,lambdaPImin_glob,lambdaPImax_glob,&
+  double precision :: courant_stability_max_glob,lambdaPImin_glob,lambdaPImax_glob, &
                        lambdaPIImin_glob,lambdaPIImax_glob,lambdaSmin_glob,lambdaSmax_glob, &
                        lambdaPmin_in_fluid_histo_glob,lambdaPmax_in_fluid_histo_glob
 
@@ -77,9 +72,9 @@
   double precision :: dt_suggested,dt_suggested_glob
   double precision :: avg_distance,vel_min,vel_max
 
-  integer :: i,j,ispec,material
+  integer :: i,j,ispec
 
-! for histogram of number of points per wavelength
+  ! for histogram of number of points per wavelength
   logical :: any_fluid_histo,any_fluid_histo_glob
   logical :: create_wavelength_histogram
   double precision :: lambdaPmin_in_fluid_histo,lambdaPmax_in_fluid_histo
@@ -102,11 +97,11 @@
     call flush_IMAIN()
   endif
 
-! define percentage of smallest distance between GLL points for NGLLX points
-! percentages were computed by calling the GLL points routine for each degree
+  ! define percentage of smallest distance between GLL points for NGLLX points
+  ! percentages were computed by calling the GLL points routine for each degree
   call check_grid_setup_GLLper(percent_GLL,NGLLX_MAX_STABILITY)
 
-!---- compute parameters for the spectral elements
+  !---- compute parameters for the spectral elements
   vpImin = HUGEVAL
   vpImax = -HUGEVAL
 
@@ -162,36 +157,7 @@
 
   do ispec = 1,nspec
 
-    if (ispec_is_poroelastic(ispec)) then
-      ! gets poroelastic material
-      call get_poroelastic_material(ispec,phi,tort,mu_s,kappa_s,rho_s,kappa_f,rho_f,eta_f,mu_fr,kappa_fr,rho_bar)
-      denst = rho_s
-
-      ! Biot coefficients for the input phi
-      call get_poroelastic_Biot_coeff(phi,kappa_s,kappa_f,kappa_fr,mu_fr,D_biot,H_biot,C_biot,M_biot)
-
-      ! permeability xx
-      perm_xx = permeability(1,kmato(ispec))
-
-      ! computes velocities
-      call get_poroelastic_velocities(cpIsquare,cpIIsquare,cssquare,H_biot,C_biot,M_biot,mu_fr,phi, &
-             tort,rho_s,rho_f,eta_f,perm_xx,f0_source(1),freq0,Q0,w_c,ATTENUATION_PORO_FLUID_PART)
-
-      cpIloc = sqrt(cpIsquare)
-      cpIIloc = sqrt(cpIIsquare)
-      csloc = sqrt(cssquare)
-    else
-      ! acoustic/elastic
-      material = kmato(ispec)
-      mu = poroelastcoef(2,1,material)
-      lambdaplus2mu  = poroelastcoef(3,1,material)
-      denst = density(1,material)
-
-      cpIloc = sqrt(lambdaplus2mu/denst)
-      cpIIloc = 0.d0
-      csloc = sqrt(mu/denst)
-    endif
-
+    ! min/max values for vpI,vpII,vs
     vpImax_local = -HUGEVAL
     vpImin_local = HUGEVAL
     vpIImax_local = -HUGEVAL
@@ -204,11 +170,19 @@
 
     do j = 1,NGLLZ
       do i = 1,NGLLX
-        !--- if heterogeneous formulation with external velocity model
-        if (assign_external_model) then
-          cpIloc = vpext(i,j,ispec)
-          csloc = vsext(i,j,ispec)
-          denst = rhoext(i,j,ispec)
+        ! velocity model
+        mul = mustore(i,j,ispec)
+        rhol = rhostore(i,j,ispec)
+        cpIloc = rho_vpstore(i,j,ispec) / rhol
+        csloc = sqrt(mul/rhol)
+
+        ! vpII
+        if (ispec_is_poroelastic(ispec)) then
+          ! poroelastic material
+          cpIIloc = vpIIstore(i,j,ispec)
+        else
+          ! acoustic/elastic element
+          cpIIloc = 0.d0
         endif
 
         !--- compute min and max of velocity and density models
@@ -223,8 +197,8 @@
         if (csloc > TINYVAL) vsmin = min(vsmin,csloc)
         vsmax = max(vsmax,csloc)
 
-        densmin = min(densmin,denst)
-        densmax = max(densmax,denst)
+        densmin = min(densmin,rhol)
+        densmax = max(densmax,rhol)
 
         vpImax_local = max(vpImax_local,cpIloc)
         vpImin_local = min(vpImin_local,cpIloc)
@@ -356,6 +330,9 @@
   pmax = pmax_glob
   dt_suggested = dt_suggested_glob
 
+  ! mesh resolved minimum period
+  mesh_T_min = pmax_glob
+
   ! sets if any slice has fluid histogram
   call any_all_l(any_fluid_histo,any_fluid_histo_glob)
 
@@ -422,19 +399,19 @@
             write(IMAIN,*) '----'
             write(IMAIN,*) '  Source ',i
             write(IMAIN,*) '  maximum dominant source frequency = ',f0max,'Hz'
-            write(IMAIN,*) ''
+            write(IMAIN,*)
             if (POROELASTIC_SIMULATION) then
               ! slow and fast P-waves
               write(IMAIN,*) '  Nb pts / lambdaPI_fmax min = ',sngl(lambdaPImin/f0max)
               write(IMAIN,*) '  Nb pts / lambdaPI_fmax max = ',sngl(lambdaPImax/f0max)
-              write(IMAIN,*) ''
+              write(IMAIN,*)
               write(IMAIN,*) '  Nb pts / lambdaPII_fmax min = ',sngl(lambdaPIImin/f0max)
               write(IMAIN,*) '  Nb pts / lambdaPII_fmax max = ',sngl(lambdaPIImax/f0max)
             else
               write(IMAIN,*) '  Nb pts / lambdaP_fmax min = ',sngl(lambdaPImin/f0max)
               write(IMAIN,*) '  Nb pts / lambdaP_fmax max = ',sngl(lambdaPImax/f0max)
             endif
-            write(IMAIN,*) ''
+            write(IMAIN,*)
 
             ! check if fluid regions
             if (vsmin > TINYVAL) then
@@ -459,7 +436,7 @@
     endif
   endif
 
-  ! master sends to all others
+  ! main sends to all others
   call bcast_all_singledp(lambdaPmin_in_fluid_histo)
   call bcast_all_singledp(lambdaPmax_in_fluid_histo)
   call bcast_all_singledp(lambdaSmin_histo)
@@ -477,7 +454,6 @@
     call check_grid_create_histogram(any_fluid_histo_glob,lambdaPmin_in_fluid_histo,lambdaPmax_in_fluid_histo, &
                                          lambdaSmin_histo,lambdaSmax_histo,f0max)
   endif
-
 
   ! creates a PostScript file with stability condition
   if (output_postscript_snapshot) then
@@ -497,11 +473,7 @@
 
 ! create statistics about mesh sampling (number of points per wavelength)
 
-#ifdef USE_MPI
-  use mpi
-#endif
-
-  use constants,only: IMAIN,HUGEVAL,TINYVAL,ZERO
+  use constants, only: IMAIN,HUGEVAL,TINYVAL,ZERO,OUTPUT_FILES,myrank
   use specfem_par
   use specfem_par_movie
 
@@ -518,19 +490,12 @@
   ! local parameters
   double precision :: vpImin_local,vpIImin_local,vsmin_local
 
-  double precision :: kappa_s,kappa_f,kappa_fr,mu_s,mu_fr,rho_s,rho_f,eta_f,phi,tort,rho_bar
-  double precision :: D_biot,H_biot,C_biot,M_biot
-
   double precision :: cpIloc,cpIIloc,csloc
-  double precision :: cpIsquare,cpIIsquare,cssquare
-  double precision :: w_c,perm_xx
-  double precision :: denst
-  double precision :: lambdaplus2mu,mu
+  double precision :: mul,rhol
   double precision :: distance_min_local,distance_max_local
   double precision :: distance_1,distance_2,distance_3,distance_4
 
-  integer :: ier
-  integer :: i,j,ispec,material
+  integer :: i,j,ispec
 
 ! for histogram of number of points per wavelength
   double precision :: min_nb_of_points_per_wavelength,max_nb_of_points_per_wavelength,nb_of_points_per_wavelength, &
@@ -576,54 +541,31 @@
     ! loop on all the elements
     do ispec = 1,nspec
 
-      material = kmato(ispec)
-
-      if (ispec_is_poroelastic(ispec)) then
-
-        ! gets poroelastic material
-        call get_poroelastic_material(ispec,phi,tort,mu_s,kappa_s,rho_s,kappa_f,rho_f,eta_f,mu_fr,kappa_fr,rho_bar)
-        denst = rho_s
-
-        ! Biot coefficients for the input phi
-        call get_poroelastic_Biot_coeff(phi,kappa_s,kappa_f,kappa_fr,mu_fr,D_biot,H_biot,C_biot,M_biot)
-
-        ! permeability xx
-        perm_xx = permeability(1,kmato(ispec))
-
-        ! computes velocities
-        call get_poroelastic_velocities(cpIsquare,cpIIsquare,cssquare,H_biot,C_biot,M_biot,mu_fr,phi, &
-               tort,rho_s,rho_f,eta_f,perm_xx,f0_source(1),freq0,Q0,w_c,ATTENUATION_PORO_FLUID_PART)
-
-        cpIloc = sqrt(cpIsquare)
-        cpIIloc = sqrt(cpIIsquare)
-        csloc = sqrt(cssquare)
-      else
-        mu = poroelastcoef(2,1,material)
-        lambdaplus2mu  = poroelastcoef(3,1,material)
-        denst = density(1,material)
-
-        cpIloc = sqrt(lambdaplus2mu/denst)
-        cpIIloc = 0.d0
-        csloc = sqrt(mu/denst)
-      endif
-
+      ! minimum values vp,vs
       vpImin_local = HUGEVAL
       vpIImin_local = HUGEVAL
       vsmin_local = HUGEVAL
 
       do j = 1,NGLLZ
         do i = 1,NGLLX
+          ! velocity model
+          mul = mustore(i,j,ispec)
+          rhol = rhostore(i,j,ispec)
+          cpIloc = rho_vpstore(i,j,ispec) / rhol
+          csloc = sqrt(mul/rhol)
 
-          !--- if heterogeneous formulation with external velocity model
-          if (assign_external_model) then
-            cpIloc = vpext(i,j,ispec)
-            csloc = vsext(i,j,ispec)
+          ! vpII
+          if (ispec_is_poroelastic(ispec)) then
+            ! poroelastic material
+            cpIIloc = vpIIstore(i,j,ispec)
+          else
+            ! acoustic/elastic element
+            cpIIloc = 0.d0
           endif
 
           vpImin_local = min(vpImin_local,cpIloc)
           vpIImin_local = min(vpIImin_local,cpIIloc)
           vsmin_local = min(vsmin_local,csloc)
-
         enddo
       enddo
 
@@ -686,12 +628,7 @@
 
     enddo
 
-#ifdef USE_MPI
-    call MPI_REDUCE(classes_wavelength, classes_wavelength_all, NCLASSES, MPI_INTEGER, MPI_SUM, 0, MPI_COMM_WORLD, ier)
-#else
-    ier = 0
-    classes_wavelength_all(:) = classes_wavelength(:)
-#endif
+    call sum_all_1Darray_i(classes_wavelength, classes_wavelength_all, NCLASSES)
 
     ! gets total for all slices
     call sum_all_i(nspec,nspec_all)
@@ -730,10 +667,10 @@
       scaling_factor = max_nb_of_points_per_wavelength - min_nb_of_points_per_wavelength
 
       if (ipass == 1) then
-        open(unit=14,file='OUTPUT_FILES/points_per_wavelength_histogram_S_in_solid.txt',status='unknown')
+        open(unit=14,file=trim(OUTPUT_FILES)//'points_per_wavelength_histogram_S_in_solid.txt',status='unknown')
         scaling_factor_S = scaling_factor
       else
-        open(unit=14,file='OUTPUT_FILES/points_per_wavelength_histogram_P_in_fluid.txt',status='unknown')
+        open(unit=14,file=trim(OUTPUT_FILES)//'points_per_wavelength_histogram_P_in_fluid.txt',status='unknown')
         scaling_factor_P = scaling_factor
       endif
       do iclass = 0,NCLASSES-1
@@ -749,7 +686,7 @@
 
       if (total_percent < 99.9d0 .or. total_percent > 100.1d0) then
         write(IMAIN,*) 'total percentage = ',total_percent,' %'
-        stop 'total percentage should be 100%'
+        call stop_the_code('total percentage should be 100%')
       else
         write(IMAIN,*)
         write(IMAIN,*) 'total percentage = ',total_percent,' %'
@@ -762,7 +699,7 @@
   ! create script for Gnuplot histogram file
   if (myrank == 0) then
 
-    open(unit=14,file='OUTPUT_FILES/plot_points_per_wavelength_histogram.gnu',status='unknown')
+    open(unit=14,file=trim(OUTPUT_FILES)//'plot_points_per_wavelength_histogram.gnu',status='unknown')
     write(14,*) 'set term wxt'
 
     if (nspec_counted_all_solid > 0) then
@@ -772,7 +709,7 @@
       write(14,*) 'set boxwidth ',real(scaling_factor_S/NCLASSES)
       write(14,*) 'set xlabel "Range of min number of points per S wavelength in solid"'
       write(14,*) 'set ylabel "Percentage of elements (%)"'
-      write(14,*) 'set loadpath "./OUTPUT_FILES"'
+      write(14,*) 'set loadpath "'//trim(OUTPUT_FILES)//'"'
       write(14,*) 'plot "points_per_wavelength_histogram_S_in_solid.txt" with boxes'
       write(14,*) 'pause -1 "hit any key..."'
     endif
@@ -784,7 +721,7 @@
       write(14,*) 'set boxwidth ',real(scaling_factor_P/NCLASSES)
       write(14,*) 'set xlabel "Range of min number of points per P wavelength in fluid"'
       write(14,*) 'set ylabel "Percentage of elements (%)"'
-      write(14,*) 'set loadpath "./OUTPUT_FILES"'
+      write(14,*) 'set loadpath "'//trim(OUTPUT_FILES)//'"'
       write(14,*) 'plot "points_per_wavelength_histogram_P_in_fluid.txt" with boxes'
       write(14,*) 'pause -1 "hit any key..."'
     endif
@@ -807,17 +744,16 @@
 !-------------------------------------------------------------------------------------------------
 !
 
-
   subroutine check_grid_setup_GLLper(percent_GLL,NGLLX_MAX_STABILITY)
 
-  use constants,only: NGLLX
+  use constants, only: NGLLX
 
   implicit none
 
   integer :: NGLLX_MAX_STABILITY
   double precision :: percent_GLL(NGLLX_MAX_STABILITY)
 
-  if (NGLLX_MAX_STABILITY /= 15 ) stop 'check NGLLX_MAX_STABILITY is equal to 15 in check_grid.f90'
+  if (NGLLX_MAX_STABILITY /= 15 ) call stop_the_code('check NGLLX_MAX_STABILITY is equal to 15 in check_grid.f90')
 
 ! define percentage of smallest distance between GLL points for NGLLX points
 ! percentages were computed by calling the GLL points routine for each degree
@@ -842,7 +778,7 @@
   percent_GLL(:) = percent_GLL(:) / 100.d0
 
   if (NGLLX > NGLLX_MAX_STABILITY) then
-    stop 'cannot estimate the stability condition for degree NGLLX > NGLLX_MAX_STABILITY'
+    call stop_the_code('cannot estimate the stability condition for degree NGLLX > NGLLX_MAX_STABILITY')
   endif
 
   end subroutine check_grid_setup_GLLper
@@ -852,16 +788,10 @@
 !-------------------------------------------------------------------------------------------------
 !
 
-
   subroutine check_grid_create_postscript(courant_stability_number_max,lambdaPImin,lambdaPImax,lambdaSmin,lambdaSmax)
 
-#ifdef USE_MPI
-  use mpi
-#endif
-
-  use constants,only: IMAIN,TINYVAL,HUGEVAL, &
-    DISPLAY_SUBSET_OPTION,NSPEC_DISPLAY_SUBSET, &
-    RPERCENTX,RPERCENTZ,ORIG_X,ORIG_Z,CENTIM,THRESHOLD_POSTSCRIPT
+  use constants, only: IMAIN,TINYVAL,HUGEVAL,DISPLAY_SUBSET_OPTION,NSPEC_DISPLAY_SUBSET, &
+    RPERCENTX,RPERCENTZ,ORIG_X,ORIG_Z,CENTIM,THRESHOLD_POSTSCRIPT,OUTPUT_FILES,myrank
   use specfem_par
   use specfem_par_movie
 
@@ -874,14 +804,8 @@
 
   ! local parameters
   double precision :: vpImax_local,vpImin_local,vsmin_local
-  double precision :: kappa_s,kappa_f,kappa_fr,mu_s,mu_fr,rho_s,rho_f,eta_f,phi,tort,rho_bar
-  double precision :: D_biot,H_biot,C_biot,M_biot
-
   double precision :: cpIloc,csloc
-  double precision :: cpIsquare,cpIIsquare,cssquare
-  double precision :: w_c,perm_xx
-  double precision :: denst
-  double precision :: lambdaplus2mu,mu
+  double precision :: mul,rhol
   double precision :: lambdaS_local,lambdaPI_local
 
   double precision :: distance_min_local,distance_max_local
@@ -900,7 +824,7 @@
   double precision :: x1,z1,x2,z2,ratio_page,xmin,zmin
 
   double precision  :: xmin_glob, xmax_glob, zmin_glob, zmax_glob
-#ifdef USE_MPI
+#ifdef WITH_MPI
   integer  :: icol
 #endif
 
@@ -908,13 +832,12 @@
   double precision, dimension(:,:), allocatable  :: coorg_recv
   integer, dimension(nspec)  :: RGB_send
   integer, dimension(:), allocatable  :: RGB_recv
-  real, dimension(nspec)  :: greyscale_send
-  real, dimension(:), allocatable  :: greyscale_recv
+  double precision, dimension(nspec)  :: greyscale_send
+  double precision, dimension(:), allocatable  :: greyscale_recv
   integer :: nspec_recv
   integer :: num_ispec
   integer :: iproc
-  integer :: ier
-  integer :: i,j,ispec,material
+  integer :: i,j,ispec
   integer :: is,ir,in,nnum
   integer :: UPPER_LIMIT_DISPLAY
 
@@ -928,7 +851,7 @@
   else if (DISPLAY_SUBSET_OPTION == 4) then
     UPPER_LIMIT_DISPLAY = NSPEC_DISPLAY_SUBSET
   else
-    stop 'incorrect value of DISPLAY_SUBSET_OPTION'
+    call stop_the_code('incorrect value of DISPLAY_SUBSET_OPTION')
   endif
 
   ! checks limit
@@ -942,7 +865,7 @@
   ! percentages were computed by calling the GLL points routine for each degree
   call check_grid_setup_GLLper(percent_GLL,NGLLX_MAX_STABILITY)
 
-! A4 or US letter paper
+  ! A4 or US letter paper
   if (US_LETTER) then
     usoffset = 1.75d0
     sizex = 27.94d0
@@ -953,10 +876,10 @@
     sizez = 21.d0
   endif
 
-! height of domain numbers in centimeters
+  ! height of domain numbers in centimeters
   height = 0.25d0
 
-! get minimum and maximum values of mesh coordinates
+  ! get minimum and maximum values of mesh coordinates
   xmin = minval(coord(1,:))
   zmin = minval(coord(2,:))
   xmax = maxval(coord(1,:))
@@ -971,7 +894,7 @@
   zmin = zmin_glob
   zmax = zmax_glob
 
-! ratio of physical page size/size of the domain meshed
+  ! ratio of physical page size/size of the domain meshed
   ratio_page = min(RPERCENTZ*sizez/(zmax-zmin),RPERCENTX*sizex/(xmax-xmin)) / 100.d0
 
 
@@ -983,7 +906,7 @@
 !
 !---- open PostScript file
 !
-    open(unit=24,file='OUTPUT_FILES/mesh_stability.ps',status='unknown')
+    open(unit=24,file=trim(OUTPUT_FILES)//'mesh_stability.ps',status='unknown')
 
 !
 !---- write PostScript header
@@ -1096,7 +1019,7 @@
       do j = 1,pointsdisp
         xinterp(i,j) = 0.d0
         zinterp(i,j) = 0.d0
-        do in = 1,ngnod
+        do in = 1,NGNOD
           nnum = knods(in,ispec)
           xinterp(i,j) = xinterp(i,j) + shape2D_display(in,i,j)*coorg(1,nnum)
           zinterp(i,j) = zinterp(i,j) + shape2D_display(in,i,j)*coorg(2,nnum)
@@ -1172,49 +1095,19 @@
       coorg_send(2,(ispec-1)*5+5) = z2
     endif
 
-
-    if (ispec_is_poroelastic(ispec)) then
-      ! poroelastic material
-      call get_poroelastic_material(ispec,phi,tort,mu_s,kappa_s,rho_s,kappa_f,rho_f,eta_f,mu_fr,kappa_fr,rho_bar)
-      denst = rho_s
-
-      ! Biot coefficients for the input phi
-      call get_poroelastic_Biot_coeff(phi,kappa_s,kappa_f,kappa_fr,mu_fr,D_biot,H_biot,C_biot,M_biot)
-
-      ! permeability xx
-      perm_xx = permeability(1,kmato(ispec))
-
-      ! computes velocities
-      call get_poroelastic_velocities(cpIsquare,cpIIsquare,cssquare,H_biot,C_biot,M_biot,mu_fr,phi, &
-           tort,rho_s,rho_f,eta_f,perm_xx,f0_source(1),freq0,Q0,w_c,ATTENUATION_PORO_FLUID_PART)
-
-      cpIloc = sqrt(cpIsquare)
-    else
-      material = kmato(ispec)
-
-      lambdaplus2mu  = poroelastcoef(3,1,material)
-      denst = density(1,material)
-
-      cpIloc = sqrt(lambdaplus2mu/denst)
-    endif
-
+    ! maximum vp
     vpImax_local = -HUGEVAL
-
     do j = 1,NGLLZ
       do i = 1,NGLLX
-
-        !--- if heterogeneous formulation with external velocity model
-        if (assign_external_model) then
-          cpIloc = vpext(i,j,ispec)
-          denst = rhoext(i,j,ispec)
-        endif
+        ! velocity model
+        rhol = rhostore(i,j,ispec)
+        cpIloc = rho_vpstore(i,j,ispec) / rhol
 
         vpImax_local = max(vpImax_local,cpIloc)
-
       enddo
     enddo
 
-! compute minimum and maximum size of edges of this grid cell
+    ! compute minimum and maximum size of edges of this grid cell
     distance_1 = sqrt((coord(1,ibool(1,1,ispec)) - coord(1,ibool(NGLLX,1,ispec)))**2 + &
              (coord(2,ibool(1,1,ispec)) - coord(2,ibool(NGLLX,1,ispec)))**2)
 
@@ -1250,18 +1143,15 @@
 
   enddo ! end of loop on all the spectral elements
 
-#ifdef USE_MPI
+#ifdef WITH_MPI
   if (myrank == 0) then
 
     do iproc = 1, NPROC-1
-      call MPI_RECV (nspec_recv, 1, MPI_INTEGER, &
-              iproc, 42, MPI_COMM_WORLD, MPI_STATUS_IGNORE, ier)
+      call recv_singlei(nspec_recv,iproc,42)
       allocate(coorg_recv(2,nspec_recv*5))
       allocate(RGB_recv(nspec_recv))
-      call MPI_RECV (coorg_recv(1,1), nspec_recv*5*2, MPI_DOUBLE_PRECISION, &
-              iproc, 42, MPI_COMM_WORLD, MPI_STATUS_IGNORE, ier)
-      call MPI_RECV (RGB_recv(1), nspec_recv, MPI_INTEGER, &
-              iproc, 42, MPI_COMM_WORLD, MPI_STATUS_IGNORE, ier)
+      call recv_dp(coorg_recv(1,1),nspec_recv*5*2,iproc,42)
+      call recv_i(RGB_recv(1),nspec_recv,iproc,42)
 
       do ispec = 1, nspec_recv
         num_ispec = num_ispec + 1
@@ -1273,7 +1163,7 @@
         write(24,681) coorg_recv(1,(ispec-1)*5+4), coorg_recv(2,(ispec-1)*5+4)
         write(24,681) coorg_recv(1,(ispec-1)*5+5), coorg_recv(2,(ispec-1)*5+5)
         write(24,*) 'CO'
-        if (RGB_recv(ispec)  == 1) then
+        if (RGB_recv(ispec) == 1) then
           write(24,*) '1 0 0 RG GF 0 setgray ST'
         else
           write(24,*) 'ST'
@@ -1285,16 +1175,15 @@
     enddo
 
   else
-    call MPI_SEND (nspec, 1, MPI_INTEGER, 0, 42, MPI_COMM_WORLD, ier)
-    call MPI_SEND (coorg_send, nspec*5*2, MPI_DOUBLE_PRECISION, 0, 42, MPI_COMM_WORLD, ier)
-    call MPI_SEND (RGB_send, nspec, MPI_INTEGER, 0, 42, MPI_COMM_WORLD, ier)
+    call send_singlei (nspec, 0, 42)
+    call send_dp(coorg_send, nspec*5*2, 0, 42)
+    call send_i(RGB_send, nspec, 0, 42)
   endif
 #else
   ! dummy statements to avoid compiler warnings
   allocate(coorg_recv(1,1))
   allocate(RGB_recv(1))
   nspec_recv = 0
-  ier = 0
   iproc = NPROC
   deallocate(coorg_recv)
   deallocate(RGB_recv)
@@ -1323,9 +1212,9 @@
 !---- open PostScript file
 !
     if (ELASTIC_SIMULATION .or. POROELASTIC_SIMULATION) then
-      open(unit=24,file='OUTPUT_FILES/mesh_S_wave_dispersion.ps',status='unknown')
+      open(unit=24,file=trim(OUTPUT_FILES)//'mesh_S_wave_dispersion.ps',status='unknown')
     else
-      open(unit=24,file='OUTPUT_FILES/mesh_P_wave_dispersion.ps',status='unknown')
+      open(unit=24,file=trim(OUTPUT_FILES)//'mesh_P_wave_dispersion.ps',status='unknown')
     endif
 
 !
@@ -1443,7 +1332,7 @@
       do j = 1,pointsdisp
         xinterp(i,j) = 0.d0
         zinterp(i,j) = 0.d0
-        do in = 1,ngnod
+        do in = 1,NGNOD
           nnum = knods(in,ispec)
           xinterp(i,j) = xinterp(i,j) + shape2D_display(in,i,j)*coorg(1,nnum)
           zinterp(i,j) = zinterp(i,j) + shape2D_display(in,i,j)*coorg(2,nnum)
@@ -1519,45 +1408,17 @@
        coorg_send(2,(ispec-1)*5+5) = z2
     endif
 
-    if (ispec_is_poroelastic(ispec)) then
-      ! gets poroelastic material
-      call get_poroelastic_material(ispec,phi,tort,mu_s,kappa_s,rho_s,kappa_f,rho_f,eta_f,mu_fr,kappa_fr,rho_bar)
-      denst = rho_s
-
-      ! Biot coefficients for the input phi
-      call get_poroelastic_Biot_coeff(phi,kappa_s,kappa_f,kappa_fr,mu_fr,D_biot,H_biot,C_biot,M_biot)
-
-      ! permeability xx
-      perm_xx = permeability(1,kmato(ispec))
-
-      ! computes velocities
-      call get_poroelastic_velocities(cpIsquare,cpIIsquare,cssquare,H_biot,C_biot,M_biot,mu_fr,phi, &
-                                      tort,rho_s,rho_f,eta_f,perm_xx,f0_source(1),freq0,Q0,w_c,ATTENUATION_PORO_FLUID_PART)
-
-      cpIloc = sqrt(cpIsquare)
-      csloc = sqrt(cssquare)
-    else
-      material = kmato(ispec)
-      mu = poroelastcoef(2,1,material)
-      lambdaplus2mu  = poroelastcoef(3,1,material)
-      denst = density(1,material)
-
-      cpIloc = sqrt(lambdaplus2mu/denst)
-      csloc = sqrt(mu/denst)
-    endif
-
+    ! gets min/max values vp,vs
     vpImax_local = -HUGEVAL
     vpImin_local = HUGEVAL
     vsmin_local = HUGEVAL
-
     do j = 1,NGLLZ
       do i = 1,NGLLX
-!--- if heterogeneous formulation with external velocity model
-        if (assign_external_model) then
-          cpIloc = vpext(i,j,ispec)
-          csloc = vsext(i,j,ispec)
-          denst = rhoext(i,j,ispec)
-        endif
+        ! velocity model
+        mul = mustore(i,j,ispec)
+        rhol = rhostore(i,j,ispec)
+        cpIloc = rho_vpstore(i,j,ispec) / rhol
+        csloc = sqrt(mul/rhol)
 
         vpImax_local = max(vpImax_local,cpIloc)
         vpImin_local = min(vpImin_local,cpIloc)
@@ -1565,7 +1426,7 @@
       enddo
     enddo
 
-! compute minimum and maximum size of edges of this grid cell
+    ! compute minimum and maximum size of edges of this grid cell
     distance_1 = sqrt((coord(1,ibool(1,1,ispec)) - coord(1,ibool(NGLLX,1,ispec)))**2 + &
                  (coord(2,ibool(1,1,ispec)) - coord(2,ibool(NGLLX,1,ispec)))**2)
 
@@ -1581,15 +1442,15 @@
     distance_min_local = min(distance_1,distance_2,distance_3,distance_4)
     distance_max_local = max(distance_1,distance_2,distance_3,distance_4)
 
-! display mesh dispersion for S waves if there is at least one elastic element in the mesh
+    ! display mesh dispersion for S waves if there is at least one elastic element in the mesh
     if (ELASTIC_SIMULATION .or. POROELASTIC_SIMULATION) then
 
-! ignore fluid regions with Vs = 0
+      ! ignore fluid regions with Vs = 0
       if (vsmin_local > TINYVAL) then
 
         lambdaS_local = vsmin_local / (distance_max_local / (NGLLX - 1))
 
-! display very good elements that are above the threshold in red
+        ! display very good elements that are above the threshold in red
         if (lambdaS_local >= THRESHOLD_POSTSCRIPT * lambdaSmax) then
           if (myrank == 0) then
             write(24,*) '1 0 0 RG GF 0 setgray ST'
@@ -1597,7 +1458,7 @@
             RGB_send(ispec) = 1
           endif
 
-! display bad elements that are below the threshold in blue
+        ! display bad elements that are below the threshold in blue
         else if (lambdaS_local <= (1. + (1. - THRESHOLD_POSTSCRIPT)) * lambdaSmin) then
           if (myrank == 0) then
             write(24,*) '0 0 1 RG GF 0 setgray ST'
@@ -1606,7 +1467,7 @@
           endif
 
         else
-! do not color the elements if not close to the threshold
+          ! do not color the elements if not close to the threshold
           if (myrank == 0) then
             write(24,*) 'ST'
           else
@@ -1615,7 +1476,7 @@
         endif
 
       else
-! do not color the elements if S-wave velocity undefined
+        ! do not color the elements if S-wave velocity undefined
         if (myrank == 0) then
           write(24,*) 'ST'
         else
@@ -1623,12 +1484,12 @@
         endif
       endif
 
-! display mesh dispersion for P waves if there is no elastic element in the mesh
+    ! display mesh dispersion for P waves if there is no elastic element in the mesh
     else
 
       lambdaPI_local = vpImin_local / (distance_max_local / (NGLLX - 1))
 
-! display very good elements that are above the threshold in red
+      ! display very good elements that are above the threshold in red
       if (lambdaPI_local >= THRESHOLD_POSTSCRIPT * lambdaPImax) then
         if (myrank == 0) then
           write(24,*) '1 0 0 RG GF 0 setgray ST'
@@ -1636,7 +1497,7 @@
           RGB_send(ispec) = 1
         endif
 
-! display bad elements that are below the threshold in blue
+      ! display bad elements that are below the threshold in blue
       else if (lambdaPI_local <= (1. + (1. - THRESHOLD_POSTSCRIPT)) * lambdaPImin) then
         if (myrank == 0) then
           write(24,*) '0 0 1 RG GF 0 setgray ST'
@@ -1645,7 +1506,7 @@
         endif
 
       else
-! do not color the elements if not close to the threshold
+        ! do not color the elements if not close to the threshold
         if (myrank == 0) then
           write(24,*) 'ST'
         else
@@ -1657,16 +1518,14 @@
 
   enddo ! end of loop on all the spectral elements
 
-#ifdef USE_MPI
+#ifdef WITH_MPI
   if (myrank == 0) then
     do iproc = 1, NPROC-1
-      call MPI_RECV (nspec_recv, 1, MPI_INTEGER,iproc, 42, MPI_COMM_WORLD, MPI_STATUS_IGNORE, ier)
+      call recv_singlei(nspec_recv,iproc,42)
       allocate(coorg_recv(2,nspec_recv*5))
       allocate(RGB_recv(nspec_recv))
-      call MPI_RECV (coorg_recv(1,1), nspec_recv*5*2, MPI_DOUBLE_PRECISION, &
-            iproc, 42, MPI_COMM_WORLD, MPI_STATUS_IGNORE, ier)
-      call MPI_RECV (RGB_recv(1), nspec_recv, MPI_INTEGER, &
-            iproc, 42, MPI_COMM_WORLD, MPI_STATUS_IGNORE, ier)
+      call recv_dp(coorg_recv(1,1),nspec_recv*5*2,iproc,42)
+      call recv_i(RGB_recv(1),nspec_recv,iproc,42)
 
       do ispec = 1, nspec_recv
         num_ispec = num_ispec + 1
@@ -1678,13 +1537,13 @@
         write(24,681) coorg_recv(1,(ispec-1)*5+4), coorg_recv(2,(ispec-1)*5+4)
         write(24,681) coorg_recv(1,(ispec-1)*5+5), coorg_recv(2,(ispec-1)*5+5)
         write(24,*) 'CO'
-        if (RGB_recv(ispec)  == 1) then
+        if (RGB_recv(ispec) == 1) then
           write(24,*) '1 0 0 RG GF 0 setgray ST'
         endif
-        if (RGB_recv(ispec)  == 3) then
+        if (RGB_recv(ispec) == 3) then
           write(24,*) '0 0 1 RG GF 0 setgray ST'
         endif
-        if (RGB_recv(ispec)  == 0) then
+        if (RGB_recv(ispec) == 0) then
           write(24,*) 'ST'
         endif
 
@@ -1693,9 +1552,9 @@
       deallocate(RGB_recv)
     enddo
   else
-    call MPI_SEND (nspec, 1, MPI_INTEGER, 0, 42, MPI_COMM_WORLD, ier)
-    call MPI_SEND (coorg_send, nspec*5*2, MPI_DOUBLE_PRECISION, 0, 42, MPI_COMM_WORLD, ier)
-    call MPI_SEND (RGB_send, nspec, MPI_INTEGER, 0, 42, MPI_COMM_WORLD, ier)
+    call send_singlei (nspec, 0, 42)
+    call send_dp (coorg_send, nspec*5*2, 0, 42)
+    call send_i (RGB_send, nspec, 0, 42)
   endif
 #endif
 
@@ -1718,7 +1577,7 @@
 !
 !---- open PostScript file
 !
-    open(unit=24,file='OUTPUT_FILES/P_velocity_model.ps',status='unknown')
+    open(unit=24,file=trim(OUTPUT_FILES)//'P_velocity_model.ps',status='unknown')
 
 !
 !---- write PostScript header
@@ -1831,7 +1690,7 @@
       do j = 1,pointsdisp
         xinterp(i,j) = 0.d0
         zinterp(i,j) = 0.d0
-        do in = 1,ngnod
+        do in = 1,NGNOD
           nnum = knods(in,ispec)
           xinterp(i,j) = xinterp(i,j) + shape2D_display(in,i,j)*coorg(1,nnum)
           zinterp(i,j) = zinterp(i,j) + shape2D_display(in,i,j)*coorg(2,nnum)
@@ -1908,47 +1767,21 @@
     endif
 
     if ((vpImax-vpImin)/vpImin > 0.02d0) then
-      if (assign_external_model) then
-        ! use lower-left corner
-        x1 = (vpext(1,1,ispec)-vpImin) / (vpImax-vpImin)
-      else
-        if (ispec_is_poroelastic(ispec)) then
-          ! gets poroelastic material
-          call get_poroelastic_material(ispec,phi,tort,mu_s,kappa_s,rho_s,kappa_f,rho_f,eta_f,mu_fr,kappa_fr,rho_bar)
-          denst = rho_s
-
-          ! Biot coefficients for the input phi
-          call get_poroelastic_Biot_coeff(phi,kappa_s,kappa_f,kappa_fr,mu_fr,D_biot,H_biot,C_biot,M_biot)
-
-          ! permeability xx
-          perm_xx = permeability(1,kmato(ispec))
-
-          ! computes velocities
-          call get_poroelastic_velocities(cpIsquare,cpIIsquare,cssquare,H_biot,C_biot,M_biot,mu_fr,phi, &
-                                          tort,rho_s,rho_f,eta_f,perm_xx,f0_source(1),freq0,Q0,w_c,ATTENUATION_PORO_FLUID_PART)
-
-          cpIloc = sqrt(cpIsquare)
-        else
-          material = kmato(ispec)
-
-          lambdaplus2mu  = poroelastcoef(3,1,material)
-          denst = density(1,material)
-          cpIloc = sqrt(lambdaplus2mu/denst)
-        endif
-        x1 = (cpIloc-vpImin)/(vpImax-vpImin)
-      endif
+      ! uses lower-left corner value
+      cpIloc = rho_vpstore(1,1,ispec)/rhostore(1,1,ispec)
+      x1 = (cpIloc - vpImin) / (vpImax - vpImin)
     else
       x1 = 0.5d0
     endif
 
-! rescale to avoid very dark gray levels
+    ! rescale to avoid very dark gray levels
     x1 = x1*0.7 + 0.2
     if (x1 > 1.d0) x1=1.d0
 
-! invert scale: white = vpmin, dark gray = vpmax
+    ! invert scale: white = vpmin, dark gray = vpmax
     x1 = 1.d0 - x1
 
-! display P-velocity model using gray levels
+    ! display P-velocity model using gray levels
     if (myrank == 0) then
       write(24,*) sngl(x1),' setgray GF 0 setgray ST'
     else
@@ -1957,16 +1790,14 @@
 
   enddo ! end of loop on all the spectral elements
 
-#ifdef USE_MPI
+#ifdef WITH_MPI
   if (myrank == 0) then
     do iproc = 1, NPROC-1
-      call MPI_RECV (nspec_recv, 1, MPI_INTEGER,iproc, 42, MPI_COMM_WORLD, MPI_STATUS_IGNORE, ier)
+      call recv_singlei(nspec_recv, iproc, 42)
       allocate(coorg_recv(2,nspec_recv*5))
       allocate(greyscale_recv(nspec_recv))
-      call MPI_RECV (coorg_recv(1,1), nspec_recv*5*2, MPI_DOUBLE_PRECISION, &
-            iproc, 42, MPI_COMM_WORLD, MPI_STATUS_IGNORE, ier)
-      call MPI_RECV (greyscale_recv(1), nspec_recv, MPI_REAL, &
-            iproc, 42, MPI_COMM_WORLD, MPI_STATUS_IGNORE, ier)
+      call recv_dp(coorg_recv(1,1), nspec_recv*5*2, iproc, 42)
+      call recv_dp(greyscale_recv(1), nspec_recv, iproc, 42)
 
       do ispec = 1, nspec_recv
         num_ispec = num_ispec + 1
@@ -1984,14 +1815,13 @@
       deallocate(greyscale_recv)
     enddo
   else
-    call MPI_SEND (UPPER_LIMIT_DISPLAY, 1, MPI_INTEGER, 0, 42, MPI_COMM_WORLD, ier)
-    call MPI_SEND (coorg_send, UPPER_LIMIT_DISPLAY*5*2, MPI_DOUBLE_PRECISION, 0, 42, MPI_COMM_WORLD, ier)
-    call MPI_SEND (greyscale_send, UPPER_LIMIT_DISPLAY, MPI_INTEGER, 0, 42, MPI_COMM_WORLD, ier)
+    call send_singlei (UPPER_LIMIT_DISPLAY, 0, 42)
+    call send_dp (coorg_send, UPPER_LIMIT_DISPLAY*5*2, 0, 42)
+    call send_dp (greyscale_send, UPPER_LIMIT_DISPLAY, 0, 42)
   endif
 #else
   ! dummy statements to avoid compiler warnings
   allocate(greyscale_recv(1))
-  ier = 0
   deallocate(greyscale_recv)
 #endif
 
@@ -2015,7 +1845,7 @@
 !
 !---- open PostScript file
 !
-    open(unit=24,file='OUTPUT_FILES/mesh_partitioning.ps',status='unknown')
+    open(unit=24,file=trim(OUTPUT_FILES)//'mesh_partitioning.ps',status='unknown')
 
 !
 !---- write PostScript header
@@ -2129,7 +1959,7 @@
       do j = 1,pointsdisp
         xinterp(i,j) = 0.d0
         zinterp(i,j) = 0.d0
-        do in = 1,ngnod
+        do in = 1,NGNOD
           nnum = knods(in,ispec)
           xinterp(i,j) = xinterp(i,j) + shape2D_display(in,i,j)*coorg(1,nnum)
           zinterp(i,j) = zinterp(i,j) + shape2D_display(in,i,j)*coorg(2,nnum)
@@ -2211,17 +2041,15 @@
 
   enddo ! end of loop on all the spectral elements
 
-#ifdef USE_MPI
+#ifdef WITH_MPI
   if (myrank == 0) then
     do iproc = 1, NPROC-1
       ! use a different color for each material set
       icol = mod(iproc, NUM_COLORS) + 1
 
-      call MPI_RECV (nspec_recv, 1, MPI_INTEGER, &
-          iproc, 42, MPI_COMM_WORLD, MPI_STATUS_IGNORE, ier)
+      call recv_singlei(nspec_recv,iproc,42)
       allocate(coorg_recv(2,nspec_recv*5))
-      call MPI_RECV (coorg_recv(1,1), nspec_recv*5*2, MPI_DOUBLE_PRECISION, &
-          iproc, 42, MPI_COMM_WORLD, MPI_STATUS_IGNORE, ier)
+      call recv_dp(coorg_recv(1,1), nspec_recv*5*2,iproc,42)
 
       do ispec = 1, nspec_recv
          num_ispec = num_ispec + 1
@@ -2240,8 +2068,8 @@
     enddo
 
   else
-    call MPI_SEND (UPPER_LIMIT_DISPLAY, 1, MPI_INTEGER,0, 42, MPI_COMM_WORLD, ier)
-    call MPI_SEND (coorg_send, UPPER_LIMIT_DISPLAY*5*2, MPI_DOUBLE_PRECISION,0, 42, MPI_COMM_WORLD, ier)
+    call send_singlei (UPPER_LIMIT_DISPLAY, 0, 42)
+    call send_dp (coorg_send, UPPER_LIMIT_DISPLAY*5*2, 0, 42)
   endif
 #endif
 

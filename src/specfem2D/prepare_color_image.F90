@@ -4,11 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
-!               Pieyre Le Loher, pieyre DOT le-loher aT inria.fr
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -16,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -32,28 +31,30 @@
 !
 !========================================================================
 
-
   subroutine prepare_color_image_init()
 
-  use constants,only: NX_NZ_IMAGE_MAX,NGLLX
+  use constants, only: NX_NZ_IMAGE_MAX,NGLLX
 
-  use specfem_par, only : coord,npgeo,myrank
+  use specfem_par, only: coord,npgeo,myrank
 
-  use specfem_par_movie,only: NX_IMAGE_color,NZ_IMAGE_color, &
+  use shared_parameters, only: factor_subsample_image
+
+  use specfem_par_movie, only: NX_IMAGE_color,NZ_IMAGE_color, &
                           xmin_color_image,xmax_color_image, &
-                          zmin_color_image,zmax_color_image,factor_subsample_image
+                          zmin_color_image,zmax_color_image
   implicit none
 
   ! local parameters
   integer  :: npgeo_glob
   double precision  :: xmin_color_image_loc, xmax_color_image_loc, &
                        zmin_color_image_loc,zmax_color_image_loc
+  double precision :: factor
 
-  ! horizontal size of the image
+  ! horizontal min and max coordinates of the image
   xmin_color_image_loc = minval(coord(1,:))
   xmax_color_image_loc = maxval(coord(1,:))
 
-  ! vertical size of the image, slightly increase it to go beyond maximum topography
+  ! vertical min and max coordinates of the image, slightly increase it to go beyond maximum topography
   zmin_color_image_loc = minval(coord(2,:))
   zmax_color_image_loc = maxval(coord(2,:))
 
@@ -62,12 +63,14 @@
   xmax_color_image = xmax_color_image_loc
   zmin_color_image = zmin_color_image_loc
   zmax_color_image = zmax_color_image_loc
-  npgeo_glob = npgeo
 
   call min_all_all_dp(xmin_color_image_loc, xmin_color_image)
   call max_all_all_dp(xmax_color_image_loc, xmax_color_image)
   call min_all_all_dp(zmin_color_image_loc, zmin_color_image)
   call max_all_all_dp(zmax_color_image_loc, zmax_color_image)
+
+  ! number of spectral element control nodes (in this slice)
+  npgeo_glob = npgeo
 
   ! collects total on all processes
   call sum_all_all_i(npgeo, npgeo_glob)
@@ -79,21 +82,28 @@
   NX_IMAGE_color = nint(sqrt(dble(npgeo_glob))) * (NGLLX-1) + 1
 
   ! compute number of pixels in the vertical direction based on ratio of sizes
-  NZ_IMAGE_color = nint(NX_IMAGE_color * (zmax_color_image - zmin_color_image) &
-                                      / (xmax_color_image - xmin_color_image))
+  NZ_IMAGE_color = nint(NX_IMAGE_color * (zmax_color_image - zmin_color_image) / (xmax_color_image - xmin_color_image))
 
   ! convert pixel sizes to even numbers because easier to reduce size,
   ! create MPEG movies in postprocessing
   NX_IMAGE_color = 2 * nint((NX_IMAGE_color / 2 + 1) / factor_subsample_image)
   NZ_IMAGE_color = 2 * nint((NZ_IMAGE_color / 2 + 1) / factor_subsample_image)
 
+  ! check tat image size is not too small
+  if (NX_IMAGE_color < 4) call exit_MPI(myrank,'output image too small: NX_IMAGE_color < 4.')
+  if (NZ_IMAGE_color < 4) call exit_MPI(myrank,'output image too small: NZ_IMAGE_color < 4.')
+
+  ! scales to a minimum of 800 pixels
+  if (max(NX_IMAGE_color,NZ_IMAGE_color) < 800) then
+    factor = 800.d0 / max(NX_IMAGE_color,NZ_IMAGE_color)
+    NX_IMAGE_color = nint( factor * NX_IMAGE_color)
+    NZ_IMAGE_color = nint( factor * NZ_IMAGE_color)
+  endif
+
   ! check that image size is not too big
 ! because from http://www.jpegcameras.com/libjpeg/libjpeg-2.html
 ! we know that the size limit of the image in each dimension is 65535:
 ! "JPEG supports image dimensions of 1 to 64K pixels in either direction".
-  if (NX_IMAGE_color < 4) call exit_MPI(myrank,'output image too small: NX_IMAGE_color < 4.')
-  if (NZ_IMAGE_color < 4) call exit_MPI(myrank,'output image too small: NZ_IMAGE_color < 4.')
-
   if (NX_IMAGE_color > 65534) &
     call exit_MPI(myrank,'output image too big: NX_IMAGE_color > 65534; increase factor_subsample_image in DATA/Par_file.')
   if (NZ_IMAGE_color > 65534) &
@@ -119,17 +129,17 @@
 
   subroutine prepare_color_image_pixels()
 
-  use constants,only: IMAIN,HUGEVAL,NGLLX,NGLLZ
+  use constants, only: IMAIN,HUGEVAL,NGLLX,NGLLZ
 
-  use specfem_par, only : myrank,coord,coorg,nspec,knods,ibool, &
+  use specfem_par, only: myrank,coord,coorg,nspec,knods,ibool, &
                           NSOURCES,nrec,x_source,z_source,st_xval,st_zval
 
+  use shared_parameters, only: DRAW_SOURCES_AND_RECEIVERS
 
-  use specfem_par_movie,only: NX_IMAGE_color,NZ_IMAGE_color, &
+  use specfem_par_movie, only: NX_IMAGE_color,NZ_IMAGE_color, &
                               xmin_color_image,xmax_color_image, &
                               zmin_color_image,zmax_color_image, &
                               nb_pixel_loc,iglob_image_color, &
-                              DRAW_SOURCES_AND_RECEIVERS, &
                               ix_image_color_source,iy_image_color_source,ix_image_color_receiver,iy_image_color_receiver
 
   implicit none
@@ -232,7 +242,7 @@
     ! find pixel position of the sources with orange crosses
     allocate(ix_image_color_source(NSOURCES), &
              iy_image_color_source(NSOURCES),stat=ier)
-    if (ier /= 0) stop 'Error allocating image source arrays'
+    if (ier /= 0) call stop_the_code('Error allocating image source arrays')
 
     do i = 1,NSOURCES
       ix_image_color_source(i) = int((x_source(i) - xmin_color_image) / size_pixel_horizontal) + 1
@@ -249,7 +259,7 @@
     ! find pixel position of the receivers with green squares
     allocate(ix_image_color_receiver(nrec), &
              iy_image_color_receiver(nrec),stat=ier)
-    if (ier /= 0) stop 'Error allocating image receiver arrays'
+    if (ier /= 0) call stop_the_code('Error allocating image receiver arrays')
 
     do i = 1,nrec
       ix_image_color_receiver(i) = int((st_xval(i) - xmin_color_image) / size_pixel_horizontal) + 1
@@ -277,38 +287,29 @@
 
 ! stores P-velocity model in image_color_vp_display
 
-#ifdef USE_MPI
-  use mpi
-#endif
+  use constants, only: NGLLX,NGLLZ,HALF,TWO,IMAIN
 
-  use constants,only: NGLLX,NGLLZ,HALF,TWO,IMAIN
+  use specfem_par, only: nglob,nspec,ispec_is_elastic,ispec_is_poroelastic,ibool, &
+                         NPROC,myrank,rho_vpstore,rhostore
 
-  use specfem_par, only : nglob,nspec,ispec_is_elastic,ispec_is_poroelastic,ibool,kmato, &
-    density,poroelastcoef, &
-    NPROC,myrank,assign_external_model,vpext
+  use shared_parameters, only: DRAW_WATER_IN_BLUE
 
-  use specfem_par_movie,only: image_color_vp_display,iglob_image_color, &
-    NX_IMAGE_color,NZ_IMAGE_color,nb_pixel_loc,num_pixel_loc,DRAW_WATER_IN_BLUE
+  use specfem_par_movie, only: image_color_vp_display,iglob_image_color, &
+                               NX_IMAGE_color,NZ_IMAGE_color,nb_pixel_loc,num_pixel_loc
+
   implicit none
 
   ! local parameters
   double precision :: vp_of_the_model
   double precision, dimension(:), allocatable :: vp_display
-  double precision :: rhol,mul_relaxed,lambdal_relaxed
-
-  double precision :: phi,tort,mu_s,kappa_s,rho_s,kappa_f,rho_f,eta_f,mu_fr,kappa_fr,rho_bar
-  double precision :: D_biot,H_biot,C_biot,M_biot
-
-  double precision :: afactor,bfactor,cfactor
-  double precision :: cpIsquare
 
   integer  :: i,j,k,ispec
-#ifdef USE_MPI
+#ifdef WITH_MPI
   double precision, dimension(:), allocatable  :: data_pixel_recv
   double precision, dimension(:), allocatable  :: data_pixel_send
   integer, dimension(:,:), allocatable  :: num_pixel_recv
   integer, dimension(:), allocatable  :: tmp_nb_pixel_per_proc
-  integer :: ier,iproc
+  integer :: iproc
 #else
   integer :: dummy
 #endif
@@ -323,43 +324,12 @@
   allocate(vp_display(nglob))
 
   do ispec = 1,nspec
-
-    if (ispec_is_poroelastic(ispec)) then
-      !get parameters of current spectral element
-      call get_poroelastic_material(ispec,phi,tort,mu_s,kappa_s,rho_s,kappa_f,rho_f,eta_f,mu_fr,kappa_fr,rho_bar)
-
-      ! Biot coefficients for the input phi
-      call get_poroelastic_Biot_coeff(phi,kappa_s,kappa_f,kappa_fr,mu_fr,D_biot,H_biot,C_biot,M_biot)
-
-      ! Approximated velocities (no viscous dissipation)
-      afactor = rho_bar - phi/tort*rho_f
-      bfactor = H_biot + phi*rho_bar/(tort*rho_f)*M_biot - TWO*phi/tort*C_biot
-      cfactor = phi/(tort*rho_f)*(H_biot*M_biot - C_biot*C_biot)
-
-      cpIsquare = (bfactor + sqrt(bfactor*bfactor - 4.d0*afactor*cfactor))/(2.d0*afactor)
-
-      do j = 1,NGLLZ
-        do i = 1,NGLLX
-          vp_display(ibool(i,j,ispec)) = sqrt(cpIsquare)
-        enddo
+    ! vp velocity
+    do j = 1,NGLLZ
+      do i = 1,NGLLX
+        vp_display(ibool(i,j,ispec)) = rho_vpstore(i,j,ispec) / rhostore(i,j,ispec)
       enddo
-
-    else
-      ! get relaxed elastic parameters of current spectral element
-      rhol = density(1,kmato(ispec))
-      lambdal_relaxed = poroelastcoef(1,1,kmato(ispec))
-      mul_relaxed = poroelastcoef(2,1,kmato(ispec))
-      do j = 1,NGLLZ
-        do i = 1,NGLLX
-          !--- if external medium, get elastic parameters of current grid point
-          if (assign_external_model) then
-            vp_display(ibool(i,j,ispec)) = vpext(i,j,ispec)
-          else
-            vp_display(ibool(i,j,ispec)) = sqrt((lambdal_relaxed + 2.d0*mul_relaxed) / rhol)
-          endif
-        enddo
-      enddo
-    endif ! of if (ispec_is_poroelastic(ispec)) then
+    enddo
 
 ! now display acoustic layers as constant blue, because they likely correspond to water in the case of ocean acoustics
 ! or in the case of offshore oil industry experiments.
@@ -370,18 +340,12 @@
     if (DRAW_WATER_IN_BLUE .and. .not. ispec_is_elastic(ispec) .and. .not. ispec_is_poroelastic(ispec)) then
       do j = 1,NGLLZ
         do i = 1,NGLLX
+          ! get elastic parameters of current grid point
+          vp_of_the_model = rho_vpstore(i,j,ispec) / rhostore(i,j,ispec)
 
-          !--- if external medium, get elastic parameters of current grid point
-          if (assign_external_model) then
-            vp_of_the_model = vpext(i,j,ispec)
-          else
-            vp_of_the_model = sqrt((lambdal_relaxed + 2.d0*mul_relaxed) / rhol)
-          endif
-
-! test that water is indeed water and not an acoustic version of a sediment for instance
-! thus check that Vp is the typical Vp of water
+          ! test that water is indeed water and not an acoustic version of a sediment for instance
+          ! thus check that Vp is the typical Vp of water
           if (abs(vp_of_the_model - 1480.d0) <= 50.d0) vp_display(ibool(i,j,ispec)) = -1
-
         enddo
       enddo
     endif
@@ -406,7 +370,7 @@
   enddo
 
 ! assembling array image_color_vp_display on process zero for color output
-#ifdef USE_MPI
+#ifdef WITH_MPI
 
   allocate(tmp_nb_pixel_per_proc(0:NPROC-1))
   tmp_nb_pixel_per_proc(:) = 0
@@ -422,11 +386,8 @@
     if (myrank == 0) then
       do iproc = 1, NPROC-1
 
-        call MPI_RECV(num_pixel_recv(1,iproc+1),tmp_nb_pixel_per_proc(iproc), MPI_INTEGER, &
-                iproc, 42, MPI_COMM_WORLD, MPI_STATUS_IGNORE, ier)
-
-        call MPI_RECV(data_pixel_recv(1),tmp_nb_pixel_per_proc(iproc), MPI_DOUBLE_PRECISION, &
-                iproc, 43, MPI_COMM_WORLD, MPI_STATUS_IGNORE, ier)
+        call recv_i(num_pixel_recv(1,iproc+1), tmp_nb_pixel_per_proc(iproc), iproc, 42)
+        call recv_dp(data_pixel_recv(1),tmp_nb_pixel_per_proc(iproc), iproc, 43)
 
         do k = 1, tmp_nb_pixel_per_proc(iproc)
           j = ceiling(real(num_pixel_recv(k,iproc+1)) / real(NX_IMAGE_color))
@@ -458,11 +419,8 @@
         if (iglob_image_color(i,j) /= -1) data_pixel_send(k) = vp_display(iglob_image_color(i,j))
       enddo
 
-      call MPI_SEND(num_pixel_loc(1),nb_pixel_loc,MPI_INTEGER, &
-              0, 42, MPI_COMM_WORLD, ier)
-
-      call MPI_SEND(data_pixel_send(1),nb_pixel_loc,MPI_DOUBLE_PRECISION, &
-              0, 43, MPI_COMM_WORLD, ier)
+      call send_i(num_pixel_loc(1), nb_pixel_loc, 0, 42)
+      call send_dp(data_pixel_send(1), nb_pixel_loc, 0, 43)
 
     endif
   endif

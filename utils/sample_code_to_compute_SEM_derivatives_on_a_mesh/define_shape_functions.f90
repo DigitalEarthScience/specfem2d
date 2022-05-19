@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -72,7 +72,7 @@
   t  = gamma
 
 !----    4-node element
-  if(ngnod == 4) then
+  if (ngnod == 4) then
        sp = s + ONE
        sm = s - ONE
        tp = t + ONE
@@ -95,7 +95,7 @@
        dershape2D(2,4) = - QUARTER * sm
 
 !----    9-node element
-  else if(ngnod == 9) then
+  else if (ngnod == 9) then
 
        sp = s + ONE
        sm = s - ONE
@@ -152,9 +152,9 @@
 !--- check the shape functions and their derivatives
 ! sum of shape functions should be one
 ! sum of derivatives of shape functions should be zero
-  if(abs(sum(shape2D)-ONE) > TINYVAL) stop 'error shape functions'
-  if(abs(sum(dershape2D(1,:))) > TINYVAL) stop 'error deriv xi shape functions'
-  if(abs(sum(dershape2D(2,:))) > TINYVAL) stop 'error deriv gamma shape functions'
+  if (abs(sum(shape2D)-ONE) > TINYVAL) stop 'error shape functions'
+  if (abs(sum(dershape2D(1,:))) > TINYVAL) stop 'error deriv xi shape functions'
+  if (abs(sum(dershape2D(2,:))) > TINYVAL) stop 'error deriv gamma shape functions'
 
   end subroutine define_shape_functions
 

@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -45,7 +45,7 @@
 ! @ARTICLE{TrKoLi08,
 ! author = {Jeroen Tromp and Dimitri Komatitsch and Qinya Liu},
 ! title = {Spectral-Element and Adjoint Methods in Seismology},
-! journal = {Communications in Computational Physics},
+! journal = {communications in Computational Physics},
 ! year = {2008},
 ! volume = {3},
 ! pages = {1-32},
@@ -217,7 +217,7 @@
 ! @ARTICLE{TrKoLi08,
 ! author = {Jeroen Tromp and Dimitri Komatitsch and Qinya Liu},
 ! title = {Spectral-Element and Adjoint Methods in Seismology},
-! journal = {Communications in Computational Physics},
+! journal = {communications in Computational Physics},
 ! year = {2008},
 ! volume = {3},
 ! pages = {1-32},
@@ -344,15 +344,9 @@
 ! not work because it would be discontinuous at such an interface and would
 ! therefore not be consistent with the basis functions.
 
-!! DK DK uncomment this in order to force vectorization of the loops
-!! DK DK using a trick that goes out of the array bounds
-!! DK DK (then array bound checking cannot be used, thus for instance do NOT use -check all in Intel ifort)
-!! to enable, run configure with --enable-vectorization flag
-! #define FORCE_VECTORIZATION
-
   program specfem2D
 
-  use specfem_par, only: UNDO_ATTENUATION
+  use specfem_par, only: UNDO_ATTENUATION_AND_OR_PML
 
   implicit none
 
@@ -381,7 +375,7 @@
   call prepare_timerun()
 
   ! steps through time iterations
-  if (UNDO_ATTENUATION) then
+  if (UNDO_ATTENUATION_AND_OR_PML) then
     call iterate_time_undoatt()
   else
     call iterate_time()

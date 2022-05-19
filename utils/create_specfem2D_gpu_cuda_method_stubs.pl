@@ -8,7 +8,7 @@
 #             run in directory root SPECFEM2D/
 #
 
-$outfile = "src/cuda/specfem2D_gpu_cuda_method_stubs.c";
+$outfile = "src/gpu/specfem2D_gpu_cuda_method_stubs.c";
 
 
 open(IOUT,"> _____temp_tutu_____");
@@ -32,7 +32,7 @@ $header = <<END;
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -70,7 +70,7 @@ print IOUT "$header\n";
 
 $success = 0;
 
-@objects = `ls src/cuda/*.cu`;
+@objects = `ls src/gpu/*.cu`;
 
 foreach $name (@objects) {
   chop $name;

@@ -4,11 +4,18 @@
 #       this is using C as a base and installs gfortran in the test environment
 
 language: c
-
-sudo: required
-
+dist: bionic
 os: linux
+
+arch:
+  - ppc64le  # IBM Power
+#  - amd64    # travis default
+#  - arm64    # ARM
+
 compiler: gcc
+
+# deprecated
+#sudo: required
 
 env:
   global:
@@ -20,44 +27,112 @@ env:
 
   matrix:
     # for test cases, we use
-    #   TEST    - flags used for configuration
-    #   TESTCOV - determines whether or not (0/1) code coverage flags are used
+    #   TESTID       - identification number for test
+    #   TESTDIR      - test directory id
+    #   TESTFLAGS    - flags used for configuration
+    #   TESTCOV      - determines whether or not (0/1) code coverage flags are used
+    #   CUDA         - flag for compilation with CUDA
+    #   CUDA_VERSION - specifies CUDA toolkit version
 
-    # run default test with make tests
-    - TEST="" TESTCOV=0 TESTMAKE=0
+    # code coverage: vectorization & mpi, using code coverage flags
+    - TESTID=0 TESTDIR=1 TESTCOV=1 TESTFLAGS="--without-mpi" CUDA=false
 
-    # run vectorization & mpi, using code coverage flags
-    - TEST="--enable-vectorization --with-mpi" TESTCOV=1 TESTMAKE=1
+    # code coverage: vectorization & mpi, using code coverage flags
+    - TESTID=1 TESTDIR=1 TESTCOV=1 TESTFLAGS="--enable-vectorization --with-mpi" CUDA=false
 
-    # run debug
-    - TEST="--enable-debug" TESTCOV=0 TESTMAKE=1
+    # default test with make tests
+    - TESTID=2 TESTDIR=0 TESTCOV=0 TESTFLAGS="" CUDA=false
 
-    # run debug & double precision
-    - TEST="--enable-double-precision --enable-debug" TESTCOV=0 TESTMAKE=1
+    # compilation w/ CUDA
+    - TESTID=3 TESTDIR=1 TESTCOV=0 TESTFLAGS="--with-cuda=cuda5 --without-mpi" CUDA=true CUDA_VERSION=6.5-14
 
-    # run vectorization
-    - TEST="--enable-vectorization --without-mpi" TESTCOV=0 TESTMAKE=1
+    # compilation w/ CUDA and MPI
+    - TESTID=4 TESTDIR=1 TESTCOV=0 TESTFLAGS="--with-cuda=cuda5 --with-mpi" CUDA=true CUDA_VERSION=6.5-14
 
-    # run example 2 (PML)
-    - TEST="--enable-vectorization --with-mpi" TESTCOV=0 TESTMAKE=2
+    # debug flags (tested on github actions)
+    #- TESTID=5 TESTDIR=1 TESTCOV=0 TESTFLAGS="--enable-debug" CUDA=false
 
-    # run example 3 (MPI and Stacey)
-    - TEST="--enable-vectorization --with-mpi" TESTCOV=0 TESTMAKE=3
+    # debug & double precision (tested on github actions)
+    #- TESTID=6 TESTDIR=1 TESTCOV=0 TESTFLAGS="--enable-double-precision --enable-debug" CUDA=false
 
-    # run example 4 (kernel)
-    - TEST="--enable-vectorization --with-mpi" TESTCOV=0 TESTMAKE=4
+    # vectorization
+    - TESTID=7 TESTDIR=1 TESTCOV=0 TESTFLAGS="--enable-vectorization --without-mpi" CUDA=false
 
-    # run example 5 (poroelastic/acoustic)
-    - TEST="--enable-vectorization --with-mpi" TESTCOV=0 TESTMAKE=5
+    # example w/ PML
+    - TESTID=8 TESTDIR=2 TESTCOV=0 TESTFLAGS="--enable-vectorization --with-mpi" CUDA=false
 
-    # run example 6 (noise)
-    - TEST="--enable-vectorization --with-mpi" TESTCOV=0 TESTMAKE=6
+    # example w/ MPI and Stacey
+    - TESTID=9 TESTDIR=3 TESTCOV=0 TESTFLAGS="--enable-vectorization --with-mpi" CUDA=false
 
-    # run example 7 (axisymmetric)
-    - TEST="--enable-vectorization --with-mpi" TESTCOV=0 TESTMAKE=7
+    # example w/ kernel calculation
+    - TESTID=10 TESTDIR=4 TESTCOV=0 TESTFLAGS="--enable-vectorization --with-mpi" CUDA=false
 
-    # run example 8 (PML and MPI)
-    - TEST="--enable-vectorization --with-mpi" TESTCOV=0 TESTMAKE=8
+    # example w/ poroelastic/acoustic media
+    - TESTID=11 TESTDIR=5 TESTCOV=0 TESTFLAGS="--enable-vectorization --with-mpi" CUDA=false
+
+    # example w/ noise
+    - TESTID=12 TESTDIR=6 TESTCOV=0 TESTFLAGS="--enable-vectorization --with-mpi" CUDA=false
+
+    # example w/ axisymmetric & attenuation (tested on github actions)
+    #- TESTID=13 TESTDIR=7 TESTCOV=0 TESTFLAGS="--enable-vectorization --with-mpi" CUDA=false
+
+    # example w/ PML and MPI
+    - TESTID=14 TESTDIR=8 TESTCOV=0 TESTFLAGS="--enable-vectorization --with-mpi" CUDA=false
+
+    # example w/ MPI and SEP format (tested on github actions)
+    #- TESTID=15 TESTDIR=9 TESTCOV=0 TESTFLAGS="--enable-vectorization --with-mpi" CUDA=false
+
+    # example w/ initialfield Rayleigh wave (disabled, takes too long)
+    #- TESTID=16 TESTDIR=10 TESTCOV=0 TESTFLAGS="--enable-vectorization --with-mpi" CUDA=false
+
+    # example w/ initialfield Rayleigh wave and manual crack (disabled, takes too long)
+    #- TESTID=17 TESTDIR=11 TESTCOV=0 TESTFLAGS="--enable-vectorization --with-mpi" CUDA=false
+
+    # example w/ SH waves and checkerboard model
+    - TESTID=18 TESTDIR=12 TESTCOV=0 TESTFLAGS="--without-mpi" CUDA=false
+
+    # check amplitudes pressure
+    - TESTID=19 TESTDIR=13 TESTCOV=0 TESTFLAGS="--without-mpi" CUDA=false
+
+    # check amplitudes elastic
+    - TESTID=20 TESTDIR=14 TESTCOV=0 TESTFLAGS="--without-mpi" CUDA=false
+
+    # check amplitudes viscoelastic
+    - TESTID=21 TESTDIR=15 TESTCOV=0 TESTFLAGS="--without-mpi" CUDA=false
+
+    # fluid solid
+    - TESTID=22 TESTDIR=16 TESTCOV=0 TESTFLAGS="--with-mpi" CUDA=false
+
+    # poroelastic
+    - TESTID=23 TESTDIR=17 TESTCOV=0 TESTFLAGS="--with-mpi" CUDA=false
+
+    # example w/ noise kernel
+    - TESTID=24 TESTDIR=6 TESTCOV=0 TESTFLAGS="--enable-vectorization --with-mpi" CUDA=false
+
+    # example w/ LDDRK
+    - TESTID=25 TESTDIR=18 TESTCOV=0 TESTFLAGS="--enable-vectorization --with-mpi" CUDA=false
+
+    # example w/ NO_BACKWARD_RECONSTRUCTION
+    - TESTID=26 TESTDIR=4 TESTCOV=0 TESTFLAGS="--enable-vectorization --with-mpi" CUDA=false
+
+    # moving sources (tested on github actions)
+    #- TESTID=27 TESTDIR=19 TESTCOV=0 TESTFLAGS="--enable-vectorization --with-mpi" CUDA=false
+
+    # anisotropic/isotropic model (tested on github actions)
+    #- TESTID=28 TESTDIR=20 TESTCOV=0 TESTFLAGS="--enable-vectorization --with-mpi" CUDA=false
+
+    # infinite_homogeneous_moment_tensor_vertical_dip_slip example
+    - TESTID=29 TESTDIR=21 TESTCOV=0 TESTFLAGS="" CUDA=false
+
+
+# additional ARM tests
+jobs:
+  include:
+  - arch: arm64
+    env: TESTID=2 TESTDIR=0 TESTCOV=0 TESTFLAGS="" CUDA=false
+  - arch: arm64
+    env: TESTID=5 TESTDIR=1 TESTCOV=0 TESTFLAGS="--enable-debug" CUDA=false
+
 
 before_install:
   # informations on git
@@ -66,241 +141,86 @@ before_install:
     git rev-parse --verify HEAD
     git branch -a
 
-  # checks if changes occurred in folders src/ or setup/
+  # infos on commits
   - |
     echo "request: Branch($TRAVIS_BRANCH) Pull Request($TRAVIS_PULL_REQUEST) Tag($TRAVIS_TAG)"
     echo "commit : Commit($TRAVIS_COMMIT) Range($TRAVIS_COMMIT_RANGE)"
 
-    # not working yet:
-    #  git produces error:
-    #  `fatal: ambiguous argument. .. unknown revision or path not in the working tree.`
-    #
-    # so far, we have no simple way yet to check where the changes occurred for this build
-    # and if we have to actually perform code testing or not :(
-    #
-    # to skip testing: the commit message must contain [ci skip]
-
-    # this fails...
-    #git rev-list --oneline $TRAVIS_COMMIT_RANGE
-    ## fixes triple-dot to double-dot range (see: https://github.com/travis-ci/travis-ci/issues/4596)
-    #if [[ $TRAVIS_COMMIT_RANGE =~ "..." ]]; then
-    #  RANGE=${TRAVIS_COMMIT_RANGE/.../..}
-    #else
-    #  RANGE=$TRAVIS_COMMIT_RANGE
-    #fi
-    ##RANGE1=`echo "$TRAVIS_COMMIT_RANGE" | awk '{n=split($1,a,".");print a[1]}'`
-    ##RANGE2=`echo "$TRAVIS_COMMIT_RANGE" | awk '{n=split($1,a,".");print a[n]}'`
-    #echo "request makes changes: $RANGE"
-    #git diff-tree --name-only $RANGE
-    #CHANGE=`git diff-tree --name-only $RANGE | grep -E 'src|setup'`
-    #echo "check for change: $CHANGE"
-    #if [ "$CHANGE" == "" ]; then
-    #  echo "no changes in src/ or setup/ folder, skipping code testing..."
-    #  exit 0
-    #fi
+  # checks file changes
+  - |
+    echo "check file changes"
+    if [ "${TRAVIS_PULL_REQUEST}" = "false" ]; then
+      # Push
+      echo "Push request:"
+      #COMMIT_RANGE="$(echo ${TRAVIS_COMMIT_RANGE} | cut -d '.' -f 1,4 --output-delimiter '..')"
+      #DIFF="$(git diff --name-only ${COMMIT_RANGE} --)"
+      DIFF=$(git diff --name-only ${TRAVIS_COMMIT_RANGE})
+    else
+      # PR build
+      echo "Pull request:"
+      DIFF=$(git diff --name-only ${TRAVIS_BRANCH}..HEAD --)
+    fi
+    echo "$DIFF"
+    # Escape newlines (replace \n with %0A)
+    #NEWDIFF=($( echo "$DIFF" | sed ':a;N;$!ba;s/\n/%0A/g' ))
+    #echo "$NEWDIFF"
+    #DIFF=$NEWDIFF
+    RUN_CHECKS=0
+    # Loop by lines
+    while read path; do
+      # Set $directory to substring before /
+      directory="$( echo $path | cut -d'/' -f1 -s )"
+      echo "file: $path  - directory: $directory"
+      if [ -z "$directory" ]; then
+        # root directory
+        RUN_CHECKS=1
+      elif [ "$directory" == src ]; then
+        # src/ directory
+        RUN_CHECKS=1
+      elif [ "$directory" == setup ]; then
+        # setup/ directory
+        RUN_CHECKS=1
+      elif [ "$directory" == EXAMPLES ]; then
+        # EXAMPLES/ directory
+        RUN_CHECKS=1
+      elif [ "$directory" == tests ]; then
+        # tests/ directory
+        RUN_CHECKS=1
+      elif [ "$directory" == .travis ]; then
+        # .travis/ directory
+        RUN_CHECKS=1
+      fi
+    done <<< "$DIFF"
+    echo
+    echo "run checks: ${RUN_CHECKS}"
+    echo
+    export RUN_CHECKS=${RUN_CHECKS}
+    #abort: if [[ ${RUN_CHECKS} -eq 0 ]]; then echo "nothing to check, exiting..."; exit 1; fi
 
   # recommended for MPI projects to unset CC: see https://docs.travis-ci.com/user/languages/c
   #- test -n $CC && unset CC
 
   # updates repository
-  - sudo apt-get update
+  # in case travis fails randomly due to missing key
+  - |
+    travis_retry sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 6B05F25D762E3157
+    travis_retry sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 78BD65473CB3BD13
+    travis_retry sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 762E3157
+    travis_retry sudo apt-get update
+
 
 install:
-  # fortran/openMPI compiler
-  - sudo apt-get install gfortran libgomp1 openmpi-bin libopenmpi-dev
+  # installs compilers
+  - bash .travis/run_install.sh
 
-  # python script needs numpy
-  - sudo apt-get install -qq python-numpy #python-scipy
-
-  # version infos
-  - echo "compiler versions:" ${FC} ${MPIFC} ${CC}
-  - ${FC} --version
-  - ${MPIFC} --version
-  - ${CC} --version
 
 script:
-  ###########################################################
-  # setup
-  ###########################################################
-  # info
-  - |
-    echo $TRAVIS_BUILD_DIR
-    echo $WORKDIR
-    echo "configuration test:" ${TEST} ${TESTFLAGS}
+  # builds configurations
+  - bash .travis/run_build.sh
 
-  # bash function for checking seismogram output with reference solutions
-  - |
-    my_test(){
-      echo "testing seismograms:"
-      ln -s $WORKDIR/utils/compare_seismogram_correlations.py
-      ./compare_seismogram_correlations.py OUTPUT_FILES/ REF_SEIS/
-      if [[ $? -ne 0 ]]; then exit 1; fi
-      ./compare_seismogram_correlations.py OUTPUT_FILES/ REF_SEIS/ | grep min/max | cut -d \| -f 3 | awk '{print "correlation:",$1; if ($1 < 0.9 ){print $1,"failed"; exit 1;}else{ print $1,"good"; exit 0;}}'
-      if [[ $? -ne 0 ]]; then exit 1; fi
-      rm -rf OUTPUT_FILES/
-    }
+  # runs test examples
+  - bash .travis/run_tests.sh
 
-  - |
-    my_test_kernel(){
-      echo "testing kernels:"
-      ln -s $WORKDIR/utils/compare_kernel_correlations.py
-      ./compare_kernel_correlations.py OUTPUT_FILES/proc000000_rhop_alpha_beta_kernel.dat REF_KERNEL/proc000000_rhop_alpha_beta_kernel.dat
-      if [[ $? -ne 0 ]]; then exit 1; fi
-      ./compare_kernel_correlations.py OUTPUT_FILES/proc000000_rhop_alpha_beta_kernel.dat REF_KERNEL/proc000000_rhop_alpha_beta_kernel.dat | grep min/max | cut -d \| -f 3 | awk '{print "correlation:",$1; if ($1 < 0.9 ){print $1,"failed"; exit 1;}else{ print $1,"good"; exit 0;}}'
-      if [[ $? -ne 0 ]]; then exit 1; fi
-      rm -rf OUTPUT_FILES/
-    }
-
-  ###########################################################
-  # configuration & compilation
-  ###########################################################
-  # configuration
-  - |
-    if [ "$TESTCOV" == "1" ]; then
-      ./configure FC=${FC} MPIFC=${MPIFC} CC=${CC} ${TEST} FLAGS_CHECK="-fprofile-arcs -ftest-coverage -O0"
-    else
-      ./configure FC=${FC} MPIFC=${MPIFC} CC=${CC} ${TEST}
-    fi
-
-  # compilation
-  - make clean; make -j2 all
-
-  ###########################################################
-  # test examples
-  ###########################################################
-  # testing internal mesher example (short & quick for all configuration)
-  - |
-    # chooses example directory
-    case "$TESTMAKE" in
-    0) dir=./ ;;
-    1) dir=EXAMPLES/simple_topography_and_also_a_simple_fluid_layer/ ;;
-    2) dir=EXAMPLES/semi_infinite_homogeneous/ ;;
-    3) dir=EXAMPLES/Gmsh_example_Stacey_MPI/ ;;
-    4) dir=EXAMPLES/Tromp2005_kernel/ ;;
-    5) dir=EXAMPLES/poroelastic_acoustic/ ;;
-    6) dir=EXAMPLES/noise_uniform/ ;;
-    7) dir=EXAMPLES/axisymmetric_case_AXISYM_option/ ;;
-    8) dir=EXAMPLES/simple_topography_and_also_a_simple_fluid_layer/ ;;
-    *) dir=EXAMPLES/simple_topography_and_also_a_simple_fluid_layer/ ;;
-    esac
-    # runs test
-    echo "##########################################################"
-    echo "test directory: $dir"
-    echo "##########################################################"
-    cd $dir
-    if [ "$TESTMAKE" == "0" ]; then
-      # runs default tests
-      make tests
-    else
-      # limit time steps for testing
-      if [ "$TESTMAKE" == "5" ] ; then
-        sed -i "s:^NSTEP .*:NSTEP    = 1000:" DATA/Par_file
-      fi
-      if [ "$TESTMAKE" == "7" ] ; then
-        sed -i "s:^NPROC .*:NPROC    = 2:" DATA/Par_file
-        sed -i "s:^NSTEP .*:NSTEP    = 1400:" DATA/Par_file
-      fi
-      # coverage run
-      if [ "$TESTCOV" == "1" ]; then
-        sed -i "s:^NSTEP .*:NSTEP    = 400:" DATA/Par_file
-      fi
-      # default
-      if [ "$TESTMAKE" == "4" ]; then
-        # kernel script
-        ./run_this_example_kernel.sh
-        my_test_kernel
-      elif [ "$TESTMAKE" == "8" ]; then
-        # default script
-        ./run_this_example_with_PML.sh
-        # replaces reference folder for comparison test
-        rm -rf REF_SEIS; mv REF_SEIS_with_PML REF_SEIS
-        my_test
-      else
-        # default script
-        ./run_this_example.sh
-        my_test
-      fi
-      cd $WORKDIR
-    fi
-
-  # testing example with pml (longer testing only together with mpi and code coverage)
-  - |
-    if [ "$TESTCOV" == "1" ]; then
-      cd EXAMPLES/semi_infinite_homogeneous/
-      sed -i "s:^NPROC .*:NPROC    = 2:" DATA/Par_file
-      sed -i "s:^NSTEP .*:NSTEP    = 500:" DATA/Par_file
-      ./run_this_example.sh
-      my_test
-      cd $WORKDIR
-    fi
-
-  # testing external mesher example with mpi and stacey
-  - |
-    if [ "$TESTCOV" == "1" ]; then
-      cd EXAMPLES/Gmsh_example_Stacey_MPI/
-      sed -i "s:^NSTEP .*:NSTEP    = 500:" DATA/Par_file
-      ./run_this_example.sh
-      # tests mesh quality output
-      awk '{if(NR==1){dy=sqrt(($2-13.3242693)^2);if(dy>1.e-5){print $0,"failed",dy;exit 1;}else{print $0,"good",dy;exit 0;}}}' OUTPUT_FILES/mesh_quality_histogram.txt
-      if [[ $? -ne 0 ]]; then exit 1; fi
-      my_test
-      cd $WORKDIR
-    fi
-
-  # testing kernel example
-  - |
-    if [ "$TESTCOV" == "1" ]; then
-      cd EXAMPLES/Tromp2005_kernel/
-      sed -i "s:^NSTEP .*:NSTEP    = 500:" DATA/Par_file
-      ./run_this_example_kernel.sh
-      # no kernel value testing: only execution failure
-      #my_test_kernel
-      cd $WORKDIR
-    fi
-
-  # testing poroelastic example
-  - |
-    if [ "$TESTCOV" == "1" ]; then
-      cd EXAMPLES/poroelastic_acoustic/
-      sed -i "s:^NSTEP .*:NSTEP    = 10:" DATA/Par_file
-      ./run_this_example.sh
-      # only for coverage, comparison would fail: my_test
-      cd $WORKDIR
-    fi
-
-  # testing noise example
-  - |
-    if [ "$TESTCOV" == "1" ]; then
-      cd EXAMPLES/noise_uniform/
-      sed -i "s:^NSTEP .*:NSTEP    = 10:" DATA/Par_file_noise_1
-      ./run_this_example.sh
-      # only for coverage, comparison would fail: my_test
-      cd $WORKDIR
-    fi
-
-  # testing axisymmetric example
-  - |
-    if [ "$TESTCOV" == "1" ]; then
-      cd EXAMPLES/axisymmetric_case_AXISYM_option/
-      sed -i "s:^NPROC .*:NPROC    = 2:" DATA/Par_file
-      sed -i "s:^NSTEP .*:NSTEP    = 10:" DATA/Par_file
-      ./run_this_example.sh
-      # only for coverage, comparison would fail: my_test
-      cd $WORKDIR
-    fi
-
-  # testing PML & MPI example
-  - |
-    if [ "$TESTCOV" == "1" ]; then
-      cd EXAMPLES/simple_topography_and_also_a_simple_fluid_layer/
-      sed -i "s:^NSTEP .*:NSTEP    = 10:" DATA/Par_file_with_PML
-      ./run_this_example_with_PML.sh
-      # only for coverage, comparison would fail: my_test
-      cd $WORKDIR
-    fi
-
-  # done
-  - echo `pwd`
 
 after_success:
   ###########################################################
@@ -311,6 +231,9 @@ after_success:
       gcov --version
       echo `pwd`
       ls -al obj/
+      #echo
+      #env
+      #echo
     fi
 
   # produces coverage reports (done manually because of different naming for source & object files)
@@ -321,5 +244,7 @@ after_success:
       find obj/ -iname '*.o' | sort | awk '{print "gcov -o obj/ "$1;}' | sh
     fi
 
-  # code coverage: see example https://github.com/codecov/example-fortran/blob/master/.travis.yml
+  # code coverage:
+  # see script : https://github.com/codecov/codecov-bash/blob/master/codecov
+  # see example: https://github.com/codecov/example-fortran/blob/master/.travis.yml
   - if [ "$TESTCOV" == "1" ]; then bash <(curl -s https://codecov.io/bash) -X gcov; fi

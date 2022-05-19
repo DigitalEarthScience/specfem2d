@@ -54,9 +54,9 @@ Replace \texttt{surange} with \texttt{suxwigb} to see wiggle plots for the seism
 \section*{Notes about \texttt{DATA/Par\_file} parameters}
 %------------------------------------------------------------------------------------------------%
 
-\red{\textbf{The default \texttt{DATA/Par\_file} provided in the root directory of the code contains detailed comments and should be almost self-explanatory
+The default \texttt{DATA/Par\_file} provided in the root directory of the code contains detailed comments and should be almost self-explanatory
 (note that some of the older \texttt{DATA/Par\_file} files provided in the \texttt{EXAMPLES} directory work fine but some of the comments
-they contain may be obsolete or even wrong; thus refer to the default \texttt{DATA/Par\_file} instead for reliable explanations).}}
+they contain may be obsolete or even wrong; thus refer to the default \texttt{DATA/Par\_file} instead for reliable explanations).
 
 \begin{description}[font=\ttfamily]
 
@@ -76,7 +76,7 @@ is accurate at second order and thus contains significantly less numerical noise
 
 \item[READ\_VELOCITIES\_AT\_f0]
 
- shift (i.e. change) velocities read from the input file to take average physical dispersion into account, i.e. if needed change the reference frequency at which these velocities are defined internally in the code: by default, the velocity values that are read at the end of this Par\_file of the code are supposed to be the unrelaxed values, i.e. the velocities at infinite frequency. We may want to change this and impose that the values read are those for a given frequency (here f0\_attenuation). (when we do this, velocities will then slightly decrease and waves will thus slightly slow down)
+ shift (i.e. change) velocities read from the input file to take average physical dispersion into account, i.e. if needed change the reference frequency at which these velocities are defined internally in the code: by default, the velocity values that are read at the end of this Par\_file of the code are supposed to be the unrelaxed values, i.e. the velocities at infinite frequency. If you set this flage to .true., the values read are then those for a given frequency called ATTENUATION\_f0\_REFERENCE.
 
 
 \item[nbmodels]  With \texttt{MODEL = default} chosen, a variety of simple velocity and density models can be defined using the \texttt{nbmodels} device.
@@ -84,29 +84,45 @@ is accurate at second order and thus contains significantly less numerical noise
 %
 \begin{verbatim}
 I:  model_number 1 rho Vp Vs 0 0 QKappa Qmu 0 0 0 0 0 0
-II:  model_number 2 rho c11 c13 c15 c33 c35 c55 c12 c23 c25 0 0 0
+II:  model_number 2 rho c11 c13 c15 c33 c35 c55 c12 c23 c25 0 QKappa Qmu
 III: model_number 3 rhos rhof phi c kxx kxz kzz Ks Kf Kfr etaf mufr Qmu
 IV: model_number -1 0 0 A 0 0 0 0 0 0 0 0 0 0
 \end{verbatim}
 %
 
-To make a given region acoustic, use I and make \texttt{Vs} be zero.
+To make a given region acoustic, use (I) and make \texttt{Vs} be zero.
 
-To make a given region isotropic elastic, use I and make \texttt{Vs} be nonzero.  See Section 4.1 for more details.
+To make a given region isotropic elastic, use (I) and make \texttt{Vs} be nonzero.  See Section 4.1 for more details.
 
-To make a given region anisotropic, use II.  See Section 4.2 for more details.
+To make a given region anisotropic, use (II).  See Section 4.2 for more details.
 
-To make a given region poroeslatic, use III.  See Section 4.3 for more details.
+To make a given region poroeslatic, use (III).  See Section 4.3 for more details.
 
 When viscoelasticity is turned on, the \texttt{Vp} and \texttt{Vs} values that are read here are the UNRELAXED ones i.e. the values at infinite frequency
-unless the READ\_VELOCITIES\_AT\_f0 parameter above is set to true, in which case they are the values at frequency $f_0$.
-Please also note that Qmu is always equal to Qs, but Qkappa is in general not equal to Qp. To convert one to the other see doc/note\_on\_Qkappa\_versus\_Qp.pdf and utils/attenuation/conversion\_from\_Qkappa\_Qmu\_to\_Qp\_Qs\_from\_Dahlen\_Tromp\_959\_960.f90.
+unless the \texttt{READ\_VELOCITIES\_AT\_f0} parameter above is set to true, in which case they are the values at frequency $f_0$.
+Please also note that Qmu is always equal to Qs, but Qkappa is in general not equal to Qp. To convert one to the other see \texttt{doc/note\_on\_Qkappa\_versus\_Qp.pdf} and \texttt{utils/attenuation/conversion\_from\_Qkappa\_Qmu\_to\_Qp\_Qs\_from\_Dahlen\_Tromp\_959\_960.f90}.
 
 \item[nbregions]  With \texttt{MODEL = default} chosen, a variety of simple layered model configurations can be specified using the \texttt{nbregions} device.
 
 
 
 \end{description}
+
+Regarding attenuation (viscoelasticity), in the Par\_file you need to select the number of standard linear solids (N\_SLS) to use to mimic a constant $Q$ quality factor.
+Using N\_SLS = 3 is always safe. If (and only if) you know what you are doing, you can try to reduce that in order to reduce the cost of the simulations.
+Figure~\ref{fig:selectNSLS} shows values that you can consider using (again, if and only if you know what you are doing). That table has been created by Zhinan Xie using
+a comparison between results obtained with a truly-constant $Q$ and results obtained with its approximation based on N\_SLS standard linear solids.
+The comparison is performed using the time-frequency misfit and goodness-of-fit criteria proposed by \cite{Kristekova_2009}.
+The table is drawn for a dimensionless parameter representing the distance of propagation.
+%%
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=5in]{figures/minimum_number_of_SLS_that_can_be_used_in_viscoelastic_simulation.png}
+\caption{Table showing how you can select a value of N\_SLS smaller than 3, if and only if you know what you are doing.}
+\label{fig:selectNSLS}
+\end{figure}
+%%
+
 
 %------------------------------------------------------------------------------------------------%
 \section*{Notes about \texttt{DATA/SOURCE} parameters}
@@ -129,8 +145,21 @@ For a plane wave including converted and reflected waves at the free surface, P 
 for a plane wave without converted nor reflected waves at the free surface, i.e. the incident wave only, P wave = 4, S wave = 5.
 (incident plane waves are turned on by parameter \texttt{initialfield} in \texttt{DATA/Par\_file}).
 
-\item[time\_function\_type] Choose a source-time function: set this value to \texttt{1} to use a Ricker,
-\texttt{2} the first derivative, \texttt{3} a Gaussian, \texttt{4} a Dirac or \texttt{5} a Heaviside source-time function.
+\item[time\_function\_type] Choose a source-time function: set this value to \texttt{1} to use a Ricker, i.e. the second derivative of a Gaussian,
+\texttt{2} to use the first derivative of a Gaussian, \texttt{3} to use a Gaussian, \texttt{4} to use a Dirac or \texttt{5} to use a Heaviside source-time function.
+Note that we use the standard definition of a Ricker, for a dominant frequency $f_0$:
+$\mathrm{Ricker}(t) = (1 - 2 a t^2) e^{-a t^2}$, with $a = \pi^2 f_0^2$,
+whose Fourier transform is thus:
+$\frac{1}{2} \frac{\sqrt{\pi}\omega^2}{a^{3/2}}e^{-\frac{\omega^2}{4 a}}$
+This gives the wavelet of Figure~\ref{fig:RickerWavelet}.
+%%
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=3in]{figures/Ricker_wavelet.png}
+\caption{We use the standard definition of a Ricker (i.e., second derivative of a Gaussian). Image taken from \url{http://subsurfwiki.org}.}
+\label{fig:RickerWavelet}
+\end{figure}
+%%
 
 \item[f0] Set this to the dominant frequency of the source.
 For point-source simulations using a Heaviside source-time function (\texttt{time\_function\_type = 5}),
@@ -231,84 +260,84 @@ This feature is only implemented for elastic materials and sensitivity kernels
 can be calculated (see \cite{TaLiTr07} for details on membrane
 surface waves).
 
-A useful Python script called \texttt{SEM\_save\_dir.py}, written by Paul Cristini from
-Laboratoire de Mecanique et d'Acoustique, CNRS, Marseille, France, is provided.
+An optional useful Python script called \texttt{SEM\_save\_dir.py} is provided.
 It allows one to automatically save all the parameters and results of a given simulation.
 %------------------------------------------------------------------------------------------------%
 
-% %------------------------------------------------------------------------------------------------%
-% \section{How to run axisymmetric wave simulations} %TODO
-% %------------------------------------------------------------------------------------------------%
-% Axisymmetric simulations are possible in SPECFEM2D. For these simulations the 2D domain simulated is physically the meridional 2D shape of an axisymmetric 3D domain.
-% We invite you to read our publication as an introduction: Bottero Alexis, Cristini Paul, Komatitsch Dimitri, Asch Mark. An axisymmetric time-domain spectral-element
-% method for full-wave simulations: Application to ocean acoustics. Journal of Acoustical Society of America. 2016
-% To set the geometry as axisymmetric turn the flag \texttt{AXISYM} to \texttt{.true.} in the \texttt{Par\_file}:
-% \begin{verbatim}
-%    AXISYM                          = .true.
-% \end{verbatim}
-% The left border of the model becomes then a symmetry axis. The wavefield calculated is then physically a 3D wavefield obtained by revolution of a 2D wavefield
-% around its left border.
-% \\\\
-% Note about the source:\\
-% In axisymmetric geometry the whole model is symmetric with respect to this axis, including the source. Hence if the source is not on the axis it will physically
-% have a circular shape. This is still possible and relevant for some applications as non destructive testing but
-% is most of the time unwanted. This has to be kept in mind. In acoustic medium, as an explosion in a fluid is naturally axisymmetric, the wavefield generated has the
-% correct 3D shape. However, if the source is put in an elastic solid, its 3D radiation pattern has to be axisymmetric to be simulated correctly.
-% \\\\
-% Getting started:\\
-% To get started a simple example is available in
-% \texttt{EXAMPLES/axisymmetric\_case\_AXISYM\_option}, we encourage you to read the \texttt{README} file you will find there.
-% This example contains an example of the use of \texttt{AXISYM} option plus a validation using the semi-analytical code OASES (\cite{Oases2004}).
-% In this example the domain studied is a water layer lying above a viscoelastic medium. The source is an explosion in the water and the domain is bounded with PMLs.
-% \\\\
-% Note about external meshers:\\
-% Using external meshers is possible in axisymmetric geometry. An example is available in\\ \texttt{EXAMPLES/paper\_axisymmetry\_example} with the mesher Cubit/Trelis.
-% We invite you to read the previous chapter for more details. The only difference with plane-strain geometry is that SPECFEM2D needs an additional file defining
-% axial elements. The path to this file has to be given in the \texttt{Par\_file}:
-% \begin{verbatim}
-%    axial_elements_file             = /path/to/the/axial_elements_file
-% \end{verbatim}
-% The axial elements file has the following structure:
-% \begin{verbatim}
-%         48
-%          1          2       8456       8457
-%          2          2       8457       8458
-%          3          2       8458       8459
-%          4          2       8459       8460
-%        623          2        171        204
-%       1053          2        172       9512
-%       1054          2        172        173
-%       1055          2        173        174
-%       ...
-% \end{verbatim}
-% Which is similar to free surface files. Hence the first line contains the number of axial elements, then the other lines contain four columns:
-% element id, number of nodes describing an axial element (always 2), first node id, second node id.
-% Note that the axis elements must include the possible PMLs elements on the axis.
-% For simplicity we assume that the mesh elements that are in contact with the symmetry axis are in contact with it
-% by a full edge rather than by a single point, i.e. we exclude cases as that of Figure~\ref{fig:meshrestrictionontheaxis}.
-% This amounts to imposing that the leftmost layer of elements in the mesh be structured rather than non structured; The rest of the mesh can be non structured.
-% \begin{figure}
-% %\centerline{\includegraphics[width=0.38\linewidth]{FIGURES/case_that_we_exclude_for_axisymmetric_mesh.eps}}
-% \centerline{\includegraphics[width=0.38\linewidth]{figures/meshrestrictionontheaxis}}
-% \caption{\label{fig:meshrestrictionontheaxis} For simplicity we exclude cases in which the mesh elements that are in contact with the symmetry axis
-% are in contact with it by a single point instead of by a full edge, such as element $\bar{\Omega}_2$ here.
-% This amounts to imposing that the leftmost layer of elements in the mesh be structured rather than non structured; The rest of the mesh can be non structured.}
-% \end{figure}
-% \\\\
-% Note about the resolution:\\
-% In axisymmetry a different quadrature is used in the axial elements making the number of points per wavelength necessary a slightly
-% bigger ($\approx 15\%$) than in plane-strain.
-% \\\\
-% Note about a small remaining bug:\\
-% It has to be noted that a small bug is still hiding somewhere in the code. Indeed the output signals generated are correct in the
-% whole domain except in the element containing the source. This small bug has not been solved so far but not prevent to use the code.
-% \\\\
-% Note about a demo code to learn:\\
-% A simplistic demo code is available in \\ \texttt{utils/small\_SEM\_solver\_in\_Fortran\_without\_MPI\_to\_learn}.
-% This simple code is useful to learn how the spectral-element method works in both plane-strain and axisymmetric geometries.
-% Have a look to it if interested. Once in its directory, type \texttt{./make\_Fortran\_2D\_axisymmetric.csh} and then \texttt{./xspecfem2D}
-% to compile and run. The bug discussed above is not present in this small code.
-% %------------------------------------------------------------------------------------------------%
+%------------------------------------------------------------------------------------------------%
+\section{How to run axisymmetric wave simulations}
+\label{sec:axisym}
+%------------------------------------------------------------------------------------------------%
+Axisymmetric simulations are possible in SPECFEM2D. For these simulations the 2D domain simulated is physically the meridional 2D shape of an axisymmetric 3D domain.
+We invite you to read our publication \citep{BoCrKoAs16} as an introduction.
+To set the geometry as axisymmetric turn the flag \texttt{AXISYM} to \texttt{.true.} in the \texttt{Par\_file}:
+\begin{verbatim}
+   AXISYM                          = .true.
+\end{verbatim}
+The left border of the model becomes then a symmetry axis. The wavefield calculated is then physically a 3D wavefield obtained by revolution of a 2D wavefield
+around its left border.
+\\\\
+Note about the source:\\
+In axisymmetric geometry the whole model is symmetric with respect to this axis, including the source. Hence if the source is not on the axis it will physically
+have a circular shape. This is still possible and relevant for some applications as non destructive testing but
+is most of the time unwanted. This has to be kept in mind. In acoustic medium, as an explosion in a fluid is naturally axisymmetric, the wavefield generated has the
+correct 3D shape. However, if the source is put in an elastic solid, its 3D radiation pattern will be axisymmetric.
+\\\\
+Getting started:\\
+To get started a simple example is available in
+\texttt{EXAMPLES/axisymmetric\_case\_AXISYM\_option}, we encourage you to read the \texttt{README} file you will find there.
+This example contains an example of the use of \texttt{AXISYM} option plus a validation using the semi-analytical code OASES (\cite{Oases2004}).
+In this example the domain studied is a water layer lying above a viscoelastic medium. The source is an explosion in the water and the domain is bounded with PMLs.
+\\\\
+Note about external meshers:\\
+Using external meshers is possible in axisymmetric geometry. An example is available in \\ \texttt{EXAMPLES/paper\_axisymmetry\_example} with the mesher
+Cubit/Trelis (\url{http://www.csimsoft.com/trelis}).
+We invite you to check this example and read the previous chapter for more details. The only difference with plane-strain geometry is that SPECFEM2D needs an additional file defining
+axial elements. The path to this file has to be given in the \texttt{Par\_file}:
+\begin{verbatim}
+   axial_elements_file             = /path/to/the/axial_elements_file
+\end{verbatim}
+The axial elements file has the following structure:
+\begin{verbatim}
+        48
+         1          2       8456       8457
+         2          2       8457       8458
+         3          2       8458       8459
+         4          2       8459       8460
+       623          2        171        204
+      1053          2        172       9512
+      1054          2        172        173
+      1055          2        173        174
+      ...
+\end{verbatim}
+Which is similar to free surface files. Hence the first line contains the number of axial elements, then the other lines contain four columns:
+element id, number of nodes describing an axial element (always 2), first node id, second node id.
+Note that the axis elements must include the possible (up and/or down) PMLs elements in contact with the axis.
+For simplicity we assume that the mesh elements that are in contact with the symmetry axis are in contact with it
+by a full edge rather than by a single point, i.e. we exclude cases as that of Figure~\ref{fig:meshrestrictionontheaxis}.
+This amounts to imposing that the leftmost layer of elements in the mesh be structured rather than non structured; The rest of the mesh can be non structured.
+\begin{figure}
+%\centerline{\includegraphics[width=0.38\linewidth]{FIGURES/case_that_we_exclude_for_axisymmetric_mesh.eps}}
+\centerline{\includegraphics[width=0.38\linewidth]{figures/meshrestrictionontheaxis-eps-converted-to.pdf}}
+\caption{\label{fig:meshrestrictionontheaxis} For simplicity we exclude cases in which the mesh elements that are in contact with the symmetry axis
+are in contact with it by a single point instead of by a full edge, such as element $\bar{\Omega}_2$ here.
+This amounts to imposing that the leftmost layer of elements in the mesh be structured rather than non structured; The rest of the mesh can be non structured.}
+\end{figure}
+\\\\
+Note about the resolution:\\
+In axisymmetry a different quadrature is used in the axial elements making the number of points per wavelength necessary a slightly
+bigger ($\approx 25\%$) than in plane-strain.
+\\\\
+Note about a small remaining bug:\\
+It has to be noted that a small bug is still hiding somewhere in the code. Indeed the output signals generated are correct in the
+whole domain except in the element containing the source. This small bug has not been solved so far but not prevent to use the code.
+\\\\
+Note about a demo code to learn:\\
+A simplistic demo code is available in \\ \texttt{utils/small\_SEM\_solver\_in\_Fortran\_without\_MPI\_to\_learn}.
+This simple code is useful to learn how the spectral-element method works in both plane-strain and axisymmetric geometries.
+Have a look to it if interested. Once in its directory, type \texttt{./make\_Fortran\_2D\_axisymmetric.csh} and then \texttt{./xspecfem2D}
+to compile and run. The bug discussed above is not present in this small code.
+%------------------------------------------------------------------------------------------------%
 
 %------------------------------------------------------------------------------------------------%
 \section{How to run anisotropic wave simulations}

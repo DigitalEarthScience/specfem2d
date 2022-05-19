@@ -4,11 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
-!               Pieyre Le Loher, pieyre DOT le-loher aT inria.fr
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -16,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -32,22 +31,20 @@
 !
 !========================================================================
 
+  subroutine save_openDX_jacobian(nspec,npgeo,NGNOD,knods,coorg,xigll,zigll,AXISYM,is_on_the_axis,xiglj)
 
-  subroutine save_openDX_jacobian(nspec,npgeo,ngnod,knods,coorg,xigll,zigll, &
-                                  AXISYM,is_on_the_axis,xiglj)
-
-  use constants,only: NDIM,NGLLX,NGLLZ,NGLJ,ZERO
+  use constants, only: NDIM,NGLLX,NGLLZ,NGLJ,ZERO
 
   implicit none
 
   logical :: AXISYM
 
-  integer :: nspec,npgeo,ngnod
+  integer :: nspec,npgeo,NGNOD
   double precision, dimension(NDIM,npgeo) :: coorg
   double precision, dimension(NGLLX) :: xigll
   double precision, dimension(NGLLZ) :: zigll
 
-  integer, dimension(ngnod,nspec) :: knods
+  integer, dimension(NGNOD,nspec) :: knods
 
   double precision, dimension(NGLJ) :: xiglj
   logical, dimension(nspec) :: is_on_the_axis
@@ -74,7 +71,7 @@
   allocate(ibool_OpenDX(npgeo))
   mask_point(:) = .false.
   do ispec = 1,nspec
-    do ia = 1,ngnod
+    do ia = 1,NGNOD
       nnum = knods(ia,ispec)
       xelm = coorg(1,nnum)
       zelm = coorg(2,nnum)
@@ -121,9 +118,9 @@
         endif
         gamma = zigll(j)
 
-        call recompute_jacobian(xi,gamma,x,z,xixl,xizl,gammaxl,gammazl, &
-                        jacobianl,coorg,knods,ispec,ngnod,nspec,npgeo, &
-                        .false.)
+        call recompute_jacobian_with_negative_stop(xi,gamma,x,z,xixl,xizl,gammaxl,gammazl,jacobianl, &
+                                                   coorg,knods,ispec,NGNOD,nspec,npgeo, &
+                                                   .false.)
 
         if (jacobianl <= ZERO) found_a_problem_in_this_element = .true.
       enddo

@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -45,218 +45,286 @@
 
   implicit none
 
-  integer :: NFREC,N,NSTEP
+  integer,intent(in) :: NSTEP,NFREC,label
 
-  complex(selected_real_kind(15,300)), dimension(NFREC+1) :: Field
+  complex(selected_real_kind(15,300)), dimension(NFREC+1),intent(in) :: Field
 
+  double precision, dimension(NSTEP),intent(out) :: output_field
+  double precision,intent(in) :: dt,tp,ts
+
+  ! local parameters
+  integer :: N,J
+  double precision :: AN,FUN,RAIZ
+  double precision, external :: RIC, deRIC, de2RIC
   complex(selected_real_kind(15,300)) :: CR(2*NFREC)
 
-  double precision, dimension(NSTEP) :: output_field
-
-  integer :: J,label
-
-  double precision :: AN,FUN,RAIZ,dt,tp,ts
-
-  double precision, external :: RIC, deRIC, de2RIC
-
-  N=2*NFREC
-
-  AN  = N
+  N = 2 * NFREC
+  AN = N
 
 !
-! label=1 <=> champ U en entree =>convolution par un ricker pour U
-! label=2 <=> champ U en entree =>convolution par la derivee de ricker pour V
-! label=3 <=> champ U en entree =>convolution par la derivee seconde de ricker pour A
-! label=4 <=> champ T en entree =>convolution par un ricker
+! label=1, displacement field U as input, convolution by a Ricker for displacement U
+! label=2, displacement field U as input, convolution by the first derivative of a Ricker for velocity V
+! label=3, displacement field U as input, convolution by the second derivative of a Ricker for acceleration A
+! label=4, displacement field T as input, convolution by a Ricker
 !
-! flag=0 on a besoin de U, V et A (pas T)
-! flag/=0 on a besoin de T et V (pas U ni A)
+! flag = 0 on a besoin de U, V et A (pas T)
+! flag /= 0 on a besoin de T et V (pas U ni A)
 !
-! NSTEP==1 <=> FLAG==0 (flags: interior=0, left= 1, right= 2, bottom=3)
+! NSTEP==1, FLAG==0 (flags: interior=0, left= 1, right= 2, bottom=3)
 !
 
-  do j = 1,N
-     if (label==1 .or. label==4) FUN=ric(j,tp,ts,dt)
-     if (label==2) FUN=deric(j,tp,ts,dt)
-     if (label==3) FUN=de2ric(j,tp,ts,dt)
-     CR(j)=CMPLX(FUN,0.0d0)
-  enddo
+  select case (label)
+  case (1,4)
+    ! Ricker
+    do j = 1,N
+      FUN = ric(j,tp,ts,dt)
+      CR(j) = CMPLX(FUN,0.0d0)
+    enddo
 
-  CALL fourier_transform(N,CR,-1.0d0)
+  case (2)
+    ! first derivative Ricker
+    do j = 1,N
+      FUN = deric(j,tp,ts,dt)
+      CR(j) = CMPLX(FUN,0.0d0)
+    enddo
+
+  case (3)
+    ! second derivative Ricker
+    do j = 1,N
+      FUN = de2ric(j,tp,ts,dt)
+      CR(j) = CMPLX(FUN,0.0d0)
+    enddo
+
+  case default
+    call stop_the_code('Invalid label in paco_convolve_fft')
+  end select
+
+  ! forward FFT
+  call fourier_transform(N,CR,-1.0d0)
 
   RAIZ = SQRT(AN)
 
-  CALL SINTER(Field,output_field,NSTEP,CR,RAIZ,NFREC,label,dt)
+  call SINTER(Field,output_field,NSTEP,CR,RAIZ,NFREC,label,dt)
 
-  END subroutine paco_convolve_fft
+  end subroutine paco_convolve_fft
 
-  SUBROUTINE SINTER(V,output_field,NSTEP,CR,RAIZ,NFREC,label,dt)
+!
+!-------------------------------------------------------------------------------------
+!
+
+  subroutine SINTER(V,output_field,NSTEP,CR,RAIZ,NFREC,label,dt)
 
   implicit none
 
-  integer NSTEP, j,jn,N,label,nfrec,mult,delay
+  integer,intent(in) :: NSTEP,NFREC
+  integer,intent(in) :: label
 
-  double precision :: RAIZ
+  complex(selected_real_kind(15,300)), dimension(NFREC+1),intent(in) :: V
+  double precision, dimension(NSTEP),intent(out) :: output_field
 
+  complex(selected_real_kind(15,300)),intent(in) :: CR(2*NFREC)
+  double precision,intent(in) :: RAIZ
+  double precision,intent(in) :: dt
+
+  ! local parameters
+  integer :: j,jn,N,mult,delay
+  double precision :: VT(2*NFREC)
+  double precision :: filt
   complex(selected_real_kind(15,300)) :: VC
+  complex(selected_real_kind(15,300)) :: CY(2*NFREC)
 
-  double precision VT(2*NFREC)
-
-  double precision :: filt,dt
-
-  double precision, dimension(NSTEP) :: output_field
-
-  complex(selected_real_kind(15,300)), dimension(NFREC+1) :: V
-
-  complex(selected_real_kind(15,300)) :: CY(2*NFREC),CR(2*NFREC)
-
-  N=2*NFREC
+  N = 2 * NFREC
 
   CY(1) = CR(1) * V(1) * RAIZ * dt
 
   do J = 2,N/2+1
      FILT = 1.0d0
-     VC   = V(J)
+     VC = V(J)
      CY(J)= CR(J)*VC * RAIZ * dt/ FILT
      JN = N-J+2
-     CY(JN)=CONJG(CY(J))
+     CY(JN) = CONJG(CY(J))
   enddo
 
-  CALL fourier_transform(N,CY,1.0d0)
+  call fourier_transform(N,CY,1.0d0)
 
-  if (label==1 .or. label==3 .or. (label==2 .and. NSTEP==1)) then
-! coefficients to take time steps needed (t=0: first time step)
-     mult=1
-     delay=0
-  else if (label==2 .and. NSTEP>1) then
-! coefficients to take time steps needed (t=i*deltat+1/2: one step on two starting at 1/2)
-     mult=2
-     delay=0
-  else if (label==4) then
-! coefficients to take time steps needed (t=i*deltat+1: one step on two starting at 1)
-     mult=2
-     delay=1
+  if (label == 1 .or. label == 3 .or. (label == 2 .and. NSTEP == 1)) then
+    ! coefficients to take time steps needed (t=0: first time step)
+    mult = 1
+    delay = 0
+  else if (label == 2 .and. NSTEP > 1) then
+    ! coefficients to take time steps needed (t=i*DT+1/2: one step on two starting at 1/2)
+    mult = 2
+    delay = 0
+  else if (label == 4) then
+    ! coefficients to take time steps needed (t=i*DT+1: one step on two starting at 1)
+    mult = 2
+    delay = 1
   endif
 
   do J = 1,NSTEP
-     CY(mult*J+delay)=CY(mult*J+delay)/RAIZ/dt
-     VT(mult*J+delay)=REAL(CY(mult*J+delay))
-     output_field(J)=VT(mult*J+delay)
+     CY(mult*J+delay) = CY(mult*J+delay)/RAIZ/dt
+     VT(mult*J+delay) = real(CY(mult*J+delay))
+     output_field(J) = VT(mult*J+delay)
   enddo
 
-  END SUBROUTINE SINTER
+  end subroutine SINTER
+
+!
+!-------------------------------------------------------------------------------------
+!
 
 !
 ! Ricker time function
 !
-  FUNCTION RIC(J,tp,ts,dt)
+  function RIC(J,tp,ts,dt)
 
-  use constants,only: PI
+  use constants, only: PI
 
   implicit none
 
-  double precision :: A,RIC,tp,ts,dt
+  integer,intent(in) :: J
+  double precision,intent(in) :: tp,ts,dt
+  double precision :: RIC
 
-  integer j
+  ! local parameters
+  double precision :: A
 
-  A=PI*(dt*(J-1)-ts)/tp
-  A=A*A
-  RIC=0.0d0
-  if (A>30.0d0) RETURN
-  RIC=(A-0.5)*EXP(-A)
+  A = PI*(dt*(J-1)-ts)/tp
+  A = A*A
 
-  END FUNCTION RIC
+  RIC = 0.0d0
+  if (A > 30.0d0) return
+
+  RIC = (A-0.5)*EXP(-A)
+
+  end function RIC
+
+!
+!-------------------------------------------------------------------------------------
+!
 
 !
 ! first time derivative of Ricker time function
 !
-  FUNCTION deRIC(J,tp,ts,dt)
+  function deRIC(J,tp,ts,dt)
 
-  use constants,only: PI
+  use constants, only: PI
 
   implicit none
 
-  double precision :: A,A_dot,deRIC,tp,ts,dt
-  integer :: j
+  integer,intent(in) :: J
+  double precision,intent(in) :: tp,ts,dt
+  double precision :: deRIC
 
-  A=PI*(dt*(J-1)-ts)/tp
-  A=A*A
-  A_dot=2*(PI/tp)**2*(dt*(J-1)-ts)
-  deRIC=0.0d0
-  if (A>30.0d0) RETURN
-  deRIC=A_dot*(1.5-A)*EXP(-A)
+  ! local parameters
+  double precision :: A,A_dot
 
-  END FUNCTION deRIC
+  A = PI*(dt*(J-1)-ts)/tp
+  A = A*A
+  A_dot = 2*(PI/tp)**2*(dt*(J-1)-ts)
+
+  deRIC = 0.0d0
+  if (A > 30.0d0) return
+
+  deRIC = A_dot*(1.5-A)*EXP(-A)
+
+  end function deRIC
+
+!
+!-------------------------------------------------------------------------------------
+!
 
 !
 ! second time derivative of Ricker time function
 !
-  FUNCTION de2RIC(J,tp,ts,dt)
+  function de2RIC(J,tp,ts,dt)
 
-  use constants,only: PI
+  use constants, only: PI
 
   implicit none
 
-  double precision :: A,A_dot,A_dot_dot,de2RIC,tp,ts,dt
-  integer j
+  integer,intent(in) :: J
+  double precision,intent(in) :: tp,ts,dt
+  double precision :: de2RIC
 
-  A=PI*(dt*(J-1)-ts)/tp
-  A=A*A
-  A_dot=2*(PI/tp)**2*(dt*(J-1)-ts)
-  A_dot_dot=2*(PI/tp)**2
-  de2RIC=0.0d0
-  if (A>30.0d0) RETURN
-  de2RIC=(A_dot_dot*(1.5-A)-A_dot*A_dot-A_dot*(1.5-A)*A_dot)*EXP(-A)
+  ! local parameters
+  double precision :: A,A_dot,A_dot_dot
 
-  END FUNCTION de2RIC
+  A = PI*(dt*(J-1)-ts)/tp
+  A = A*A
+  A_dot = 2*(PI/tp)**2*(dt*(J-1)-ts)
+  A_dot_dot = 2*(PI/tp)**2
 
+  de2RIC = 0.0d0
+  if (A > 30.0d0) return
+
+  de2RIC = (A_dot_dot*(1.5-A)-A_dot*A_dot-A_dot*(1.5-A)*A_dot)*EXP(-A)
+
+  end function de2RIC
+
+!
+!-------------------------------------------------------------------------------------
+!
 
 ! Fourier transform
-  SUBROUTINE fourier_transform(LX,CX,SIGNI)
+  subroutine fourier_transform(LX,CX,SIGNI)
 
-  use constants,only: PI
+! note: this routine is based on: http://pages.mtu.edu/~jdiehl/Potential_Fields/fork.f
+!
+! calculates the Fourier transform of a one-dimensional array.
+! Algorithm from Claerbout, J.F.,
+! "Fundamentals of Geophysical Data Processing with Applications to Petroleum Prospecting", McGraw-Hill, 1976.
+!
+! Input/output parameters:
+!    Complex array cx of length lx is the input array.  Upon
+!    return, cx contains the transformed array.  Length of
+!    array must be a power of 2.
+!    If signi = -1., then the forward calculation is performed;
+!    if signi =  1., the inverse transform is performed.
+
+  use constants, only: PI
 
   implicit none
 
-  integer LX,i,j,l,istep,m
+  integer,intent(in) :: LX
+  complex(selected_real_kind(15,300)),intent(inout) :: CX(LX)
+  double precision,intent(in) :: SIGNI
 
-  double precision SC
+  ! local parameters
+  integer :: i,j,l,istep,m
+  double precision :: SC
+  complex(selected_real_kind(15,300)) :: CARG,CW,CTEMP
 
-  complex(selected_real_kind(15,300)) :: CX(LX),CARG,CW,CTEMP
-
-  double precision SIGNI
-
-  J=1
-  SC=SQRT(1.0d0/LX)
+  J = 1
+  SC = SQRT(1.0d0/LX)
   do I = 1,LX
-     IF (I<=J) then
-        CTEMP=CX(J)*SC
-        CX(J)=CX(I)*SC
-        CX(I)=CTEMP
-     endif
-     M=LX/2
-     do while (M>=1 .and. M<J)
-        J=J-M
-        M=M/2
-     enddo
-     J=J+M
+    if (I <= J) then
+      CTEMP = CX(J)*SC
+      CX(J) = CX(I)*SC
+      CX(I) = CTEMP
+    endif
+    M = LX/2
+    do while (M >= 1 .and. M < J)
+      J = J-M
+      M = M/2
+    enddo
+    J = J+M
   enddo
-  L=1
+  L = 1
 
-  do while(L<LX)
-     ISTEP=2*L
-     DO  M= 1,L
-        CARG=(0.0d0,1.0d0)*(PI*SIGNI*(M-1))/L
-        CW=EXP(CARG)
-        DO  I=M,LX,ISTEP
-           CTEMP=CW*CX(I+L)
-           CX(I+L)=CX(I)-CTEMP
-           CX(I)=CX(I)+CTEMP
-        enddo
-     enddo
-
-     L=ISTEP
+  do while(L < LX)
+    ISTEP = 2*L
+    do  M = 1,L
+      CARG = (0.0d0,1.0d0)*(PI*SIGNI*(M-1))/L
+      CW = EXP(CARG)
+      do  I = M,LX,ISTEP
+        CTEMP = CW*CX(I+L)
+        CX(I+L) = CX(I)-CTEMP
+        CX(I) = CX(I)+CTEMP
+      enddo
+    enddo
+    L = ISTEP
   enddo
 
-  END SUBROUTINE fourier_transform
+  end subroutine fourier_transform
 

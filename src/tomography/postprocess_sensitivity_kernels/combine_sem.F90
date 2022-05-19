@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -65,7 +65,7 @@ program combine_sem
 
   implicit none
 
-  character(len=MAX_STRING_LEN) :: kernel_paths(MAX_KERNEL_PATHS), kernel_names(MAX_KERNEL_NAMES)
+  character(len=MAX_STRING_LEN),dimension(:),allocatable :: kernel_paths, kernel_names
   character(len=MAX_STRING_LEN) :: kernel_names_comma_delimited
   character(len=MAX_STRING_LEN) :: line,filename,output_dir,input_file
   character(len=MAX_STRING_LEN) :: arg(3)
@@ -86,11 +86,18 @@ program combine_sem
 
     if (command_argument_count() /= 3) then
       print *, 'mpirun -n NPROC bin/xcombine_sem KERNEL_NAMES INPUT_FILE OUTPUT_DIR'
-      print *, ''
-      stop 'Please check command line arguments'
+      print *
+      call stop_the_code('Please check command line arguments')
     endif
   endif
 
+  ! allocates arrays
+  allocate(kernel_paths(MAX_KERNEL_PATHS), kernel_names(MAX_KERNEL_NAMES), stat=ier)
+  if (ier /= 0) stop 'Error allocating kernel_paths array'
+  kernel_paths(:) = ''
+  kernel_names(:) = ''
+
+  ! parse command line arguments
   do i = 1, 3
     call get_command_argument(i,arg(i), status=ier)
   enddo
@@ -107,13 +114,13 @@ program combine_sem
   open(unit = IIN, file = trim(input_file), status = 'old',iostat = ier)
   if (ier /= 0) then
      print *,'Error opening ',trim(input_file)
-     stop 'Please check command line argument: INPUT_FILE'
+     call stop_the_code('Please check command line argument: INPUT_FILE')
   endif
   do while (.true.)
      read(IIN,'(a)',iostat=ier) line
      if (ier /= 0) exit
      npath = npath+1
-     if (npath > MAX_KERNEL_PATHS) stop 'Error number of paths exceeds MAX_KERNEL_PATHS'
+     if (npath > MAX_KERNEL_PATHS) call stop_the_code('Error number of paths exceeds MAX_KERNEL_PATHS')
      kernel_paths(npath) = line
   enddo
   close(IIN)
@@ -163,7 +170,7 @@ end program combine_sem
 
   allocate(array(NGLLX,NGLLZ,NSPEC), &
            sum_arrays(NGLLX,NGLLZ,NSPEC),stat=ier)
-  if (ier /= 0) stop 'Error allocating array'
+  if (ier /= 0) call stop_the_code('Error allocating array')
 
  ! loop over kernel paths
   sum_arrays = 0._CUSTOM_REAL
@@ -177,7 +184,7 @@ end program combine_sem
     open(IIN,file=trim(filename),status='old',form='unformatted',action='read',iostat=ier)
     if (ier /= 0) then
       write(*,*) '  array not found: ',trim(filename)
-      stop 'Error array file not found'
+      call stop_the_code('Error array file not found')
     endif
     read(IIN) array
     close(IIN)
@@ -192,7 +199,7 @@ end program combine_sem
   open(IOUT,file=trim(filename),form='unformatted',status='unknown',action='write',iostat=ier)
   if (ier /= 0) then
     write(*,*) 'Error array not written:',trim(filename)
-    stop 'Error array write'
+    call stop_the_code('Error array write')
   endif
   write(IOUT) sum_arrays
   close(IOUT)

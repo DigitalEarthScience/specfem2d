@@ -4,11 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
-!               Pieyre Le Loher, pieyre DOT le-loher aT inria.fr
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -16,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -32,10 +31,14 @@
 !
 !========================================================================
 
-
   subroutine setup_sources_receivers()
 
+  use specfem_par
+
   implicit none
+
+  ! checks if anything to do
+  if (setup_with_binary_database == 2) return
 
   ! locates sources and determines simulation start time t0
   call setup_sources()
@@ -55,6 +58,9 @@
   ! pre-compute lagrangians for receivers
   call setup_receiver_interpolation()
 
+  ! setup seismograms
+  call setup_receiver_seismograms()
+
   ! synchronizes processes
   call synchronize_all()
 
@@ -66,21 +72,32 @@
 
   subroutine setup_sources()
 
-  use constants,only: NGLLX,NGLLZ,NDIM,IMAIN,IIN,MAX_STRING_LEN
+  use constants, only: myrank,NGLLX,NGLLZ,NDIM,IMAIN,IIN,CUSTOM_REAL, &
+#ifndef WITH_MPI
+     OUTPUT_FILES, &
+#endif
+     MAX_STRING_LEN
 
   use specfem_par, only: NSOURCES,initialfield,source_type, &
                          coord,ibool,nglob,nspec,nelem_acoustic_surface,acoustic_surface, &
                          ispec_is_elastic,ispec_is_poroelastic, &
-                         x_source,z_source,ispec_selected_source, &
-                         islice_selected_source, &
-                         xigll,zigll,npgeo, &
-                         NPROC,myrank,xi_source,gamma_source,coorg,knods,ngnod, &
-                         iglob_source
+                         x_source,z_source,vx_source,vz_source,ispec_selected_source, &
+                         xi_source,gamma_source,sourcearrays, &
+                         islice_selected_source,iglob_source, &
+                         xigll,zigll,npgeo, NPROC,coorg,knods,NGNOD, &
+                         SOURCE_IS_MOVING,NSTEP,DT,t0,tshift_src
+
   implicit none
 
   ! Local variables
   integer :: ispec_acoustic_surface
   integer :: ixmin, ixmax, izmin, izmax,i_source,ispec
+  ! dimensions
+  double precision :: xmin,xmax,zmin,zmax
+  double precision :: xmin_local,xmax_local,zmin_local,zmax_local
+  double precision :: max_time,final_source_x,final_source_z
+  integer :: i,ier
+  logical :: not_in_mesh_domain
 
   ! user output
   if (myrank == 0) then
@@ -89,15 +106,107 @@
     call flush_IMAIN()
   endif
 
+  ! safety check
+  ! note: in principle, the number of sources could be zero for noise simulations.
+  !       however, we want to make sure to have one defined at least, even if not really needed.
+  if (NSOURCES < 1) call stop_the_code('Need at least one source for running a simulation, please check...')
+
+  ! sets source parameters
+  call set_source_parameters()
+
+  ! checks that no source target is outside the mesh
+  ! determines mesh dimensions
+  xmin_local = minval(coord(1,:))
+  xmax_local = maxval(coord(1,:))
+  zmin_local = minval(coord(2,:))
+  zmax_local = maxval(coord(2,:))
+
+  ! collect min/max
+  call min_all_all_dp(xmin_local, xmin)
+  call max_all_all_dp(xmax_local, xmax)
+  call min_all_all_dp(zmin_local, zmin)
+  call max_all_all_dp(zmax_local, zmax)
+
+  ! checks
+  if (myrank == 0) then
+    ! checks position of the source
+    do i = 1,NSOURCES
+      if (.not. SOURCE_IS_MOVING) then
+        not_in_mesh_domain = .false.
+        if (x_source(i) < xmin) not_in_mesh_domain = .true.
+        if (x_source(i) > xmax) not_in_mesh_domain = .true.
+        if (z_source(i) < zmin) not_in_mesh_domain = .true.
+        if (z_source(i) > zmax) not_in_mesh_domain = .true.
+
+        ! user output
+        if (not_in_mesh_domain) then
+          write(IMAIN,*) 'Source ',i
+          write(IMAIN,*) '  Position (x,z) of the source = ',x_source(i),z_source(i)
+          write(IMAIN,*) 'Invalid position, mesh dimensions are: xmin/max = ',xmin,xmax,'zmin/zmax',zmin,zmax
+          write(IMAIN,*) 'Please fix source location, exiting...'
+          if (x_source(i) < xmin) call stop_the_code('Error: at least one source has x < xmin of the mesh')
+          if (x_source(i) > xmax) call stop_the_code('Error: at least one source has x > xmax of the mesh')
+          if (z_source(i) < zmin) call stop_the_code('Error: at least one source has z < zmin of the mesh')
+          if (z_source(i) > zmax) call stop_the_code('Error: at least one source has z > zmax of the mesh')
+        endif
+      else  ! SOURCE_IS_MOVING
+        ! This is not perfect (it assumes the mesh is rectangular) but doing otherwise would be overkill
+        max_time = (NSTEP-1)*DT - t0 - minval(tshift_src)
+        final_source_x = x_source(i) + vx_source(i)*max_time
+        final_source_z = z_source(i) + vz_source(i)*max_time
+        not_in_mesh_domain = .false.
+        if (final_source_x < xmin) not_in_mesh_domain = .true.
+        if (final_source_x > xmax) not_in_mesh_domain = .true.
+        if (final_source_z < zmin) not_in_mesh_domain = .true.
+        if (final_source_z > zmax) not_in_mesh_domain = .true.
+        ! user output
+        if (not_in_mesh_domain) then
+          write(IMAIN,*) 'Source ', i
+          write(IMAIN,*) '  Final position (x,z) of the source = ', final_source_x, final_source_z
+          write(IMAIN,*) 'Invalid position, mesh dimensions are: xmin/max = ', xmin, xmax, 'zmin/zmax', zmin, zmax
+          write(IMAIN,*) 'Please fix source location or source speed, exiting...'
+          if (final_source_x < xmin) call stop_the_code('Error: at least one source has final x < xmin of the mesh')
+          if (final_source_x > xmax) call stop_the_code('Error: at least one source has final x > xmax of the mesh')
+          if (final_source_z < zmin) call stop_the_code('Error: at least one source has final z < zmin of the mesh')
+          if (final_source_z > zmax) call stop_the_code('Error: at least one source has final z > zmax of the mesh')
+        endif
+      endif
+    enddo
+  endif
+
+  ! source elements
+  allocate(ispec_selected_source(NSOURCES), &
+           iglob_source(NSOURCES), &
+           islice_selected_source(NSOURCES), &
+           sourcearrays(NDIM,NGLLX,NGLLZ,NSOURCES),stat=ier)
+  if (ier /= 0) call stop_the_code('Error allocating ispec source arrays')
+
+  ! source locations
+  allocate(xi_source(NSOURCES), &
+           gamma_source(NSOURCES),stat=ier)
+  if (ier /= 0) call stop_the_code('Error allocating source arrays')
+
+  ! initializes
+  islice_selected_source(:) = 0
+  ispec_selected_source(:) = 0
+  iglob_source(:) = 0
+
+  sourcearrays(:,:,:,:) = 0._CUSTOM_REAL
+
   ! locates sources
   do i_source = 1,NSOURCES
+    ! user output
+    if (myrank == 0) then
+      write(IMAIN,*) 'Source: ',i_source
+      call flush_IMAIN()
+    endif
 
     if (source_type(i_source) == 1) then
       ! collocated force source
       call locate_source(ibool,coord,nspec,nglob,xigll,zigll, &
                          x_source(i_source),z_source(i_source), &
                          ispec_selected_source(i_source),islice_selected_source(i_source), &
-                         NPROC,myrank,xi_source(i_source),gamma_source(i_source),coorg,knods,ngnod,npgeo, &
+                         NPROC,myrank,xi_source(i_source),gamma_source(i_source),coorg,knods,NGNOD,npgeo, &
                          iglob_source(i_source),.true.) ! flag .true. indicates force source
 
       ! check
@@ -111,21 +220,21 @@
           izmax = acoustic_surface(5,ispec_acoustic_surface)
           if (.not. ispec_is_elastic(ispec) .and. .not. ispec_is_poroelastic(ispec) .and. &
             ispec == ispec_selected_source(i_source)) then
-            if ((izmin==1 .and. izmax==1 .and. ixmin==1 .and. ixmax==NGLLX .and. &
-                gamma_source(i_source) < -0.99d0) .or.&
-                (izmin==NGLLZ .and. izmax==NGLLZ .and. ixmin==1 .and. ixmax==NGLLX .and. &
-                gamma_source(i_source) > 0.99d0) .or.&
-                (izmin==1 .and. izmax==NGLLZ .and. ixmin==1 .and. ixmax==1 .and. &
-                xi_source(i_source) < -0.99d0) .or.&
-                (izmin==1 .and. izmax==NGLLZ .and. ixmin==NGLLX .and. ixmax==NGLLX .and. &
-                xi_source(i_source) > 0.99d0) .or.&
-                (izmin==1 .and. izmax==1 .and. ixmin==1 .and. ixmax==1 .and. &
-                gamma_source(i_source) < -0.99d0 .and. xi_source(i_source) < -0.99d0) .or.&
-                (izmin==1 .and. izmax==1 .and. ixmin==NGLLX .and. ixmax==NGLLX .and. &
-                gamma_source(i_source) < -0.99d0 .and. xi_source(i_source) > 0.99d0) .or.&
-                (izmin==NGLLZ .and. izmax==NGLLZ .and. ixmin==1 .and. ixmax==1 .and. &
-                gamma_source(i_source) > 0.99d0 .and. xi_source(i_source) < -0.99d0) .or.&
-                (izmin==NGLLZ .and. izmax==NGLLZ .and. ixmin==NGLLX .and. ixmax==NGLLX .and. &
+            if ((izmin == 1 .and. izmax == 1 .and. ixmin == 1 .and. ixmax == NGLLX .and. &
+                gamma_source(i_source) < -0.99d0) .or. &
+                (izmin == NGLLZ .and. izmax == NGLLZ .and. ixmin == 1 .and. ixmax == NGLLX .and. &
+                gamma_source(i_source) > 0.99d0) .or. &
+                (izmin == 1 .and. izmax == NGLLZ .and. ixmin == 1 .and. ixmax == 1 .and. &
+                xi_source(i_source) < -0.99d0) .or. &
+                (izmin == 1 .and. izmax == NGLLZ .and. ixmin == NGLLX .and. ixmax == NGLLX .and. &
+                xi_source(i_source) > 0.99d0) .or. &
+                (izmin == 1 .and. izmax == 1 .and. ixmin == 1 .and. ixmax == 1 .and. &
+                gamma_source(i_source) < -0.99d0 .and. xi_source(i_source) < -0.99d0) .or. &
+                (izmin == 1 .and. izmax == 1 .and. ixmin == NGLLX .and. ixmax == NGLLX .and. &
+                gamma_source(i_source) < -0.99d0 .and. xi_source(i_source) > 0.99d0) .or. &
+                (izmin == NGLLZ .and. izmax == NGLLZ .and. ixmin == 1 .and. ixmax == 1 .and. &
+                gamma_source(i_source) > 0.99d0 .and. xi_source(i_source) < -0.99d0) .or. &
+                (izmin == NGLLZ .and. izmax == NGLLZ .and. ixmin == NGLLX .and. ixmax == NGLLX .and. &
                 gamma_source(i_source) > 0.99d0 .and. xi_source(i_source) > 0.99d0)) then
               call exit_MPI(myrank,'an acoustic source cannot be located exactly '// &
                             'on the free surface because pressure is zero there')
@@ -133,8 +242,6 @@
           endif
         enddo
 
-        ! daniel debug
-        !open(unit=1234,file='OUTPUT_FILES/debug_source_contribution.txt',status='unknown')
       endif
 
     else if (source_type(i_source) == 2) then
@@ -144,10 +251,10 @@
       call locate_source(ibool,coord,nspec,nglob,xigll,zigll, &
                          x_source(i_source),z_source(i_source), &
                          ispec_selected_source(i_source),islice_selected_source(i_source), &
-                         NPROC,myrank,xi_source(i_source),gamma_source(i_source),coorg,knods,ngnod,npgeo, &
+                         NPROC,myrank,xi_source(i_source),gamma_source(i_source),coorg,knods,NGNOD,npgeo, &
                          iglob_source(i_source),.false.) ! flag .false. indicates moment-tensor source
 
-    else if (.not.initialfield) then
+    else if (.not. initialfield) then
 
       call exit_MPI(myrank,'incorrect source type')
 
@@ -158,12 +265,12 @@
 !! DK DK this below not supported in the case of MPI yet, we should do a MPI_GATHER() of the values
 !! DK DK and use "if (myrank == islice_selected_rec(irec)) then" to display the right sources
 !! DK DK and receivers carried by each mesh slice, and not fictitious values coming from other slices
-#ifndef USE_MPI
+#ifndef WITH_MPI
   if (myrank == 0) then
      ! write actual source locations to file
      ! note that these may differ from input values, especially if source_surf = .true. in SOURCE
      ! note that the exact source locations are determined from (ispec,xi,gamma) values
-     open(unit=14,file='OUTPUT_FILES/for_information_SOURCE_actually_used',status='unknown')
+     open(unit=14,file=trim(OUTPUT_FILES)//'for_information_SOURCE_actually_used',status='unknown')
      do i_source= 1,NSOURCES
         write(14,*) x_source(i_source), z_source(i_source)
      enddo
@@ -180,29 +287,61 @@
 !----------------------------------------------------------------------------
 !
 
+!original routine, left here for reference...
+!
+!  subroutine setup_sources_read_file()
+!
+! reads source parameters
+!
+!  use constants, only: IIN
+!  use specfem_par
+!  use specfem_par_movie
+!
+!  implicit none
+!
+!  ! local parameters
+!  integer :: i_source,ier
+!
+!  !----  read source information
+!  read(IIN) NSOURCES
+!
+!  ! reads in source info from Database file (check with routine save_databases_sources())
+!  do i_source = 1,NSOURCES
+!    read(IIN) source_type(i_source),time_function_type(i_source)
+!    read(IIN) name_of_source_file(i_source)
+!    read(IIN) burst_band_width(i_source)
+!    read(IIN) x_source(i_source),z_source(i_source)
+!    read(IIN) f0_source(i_source),tshift_src(i_source)
+!    read(IIN) factor(i_source),anglesource(i_source)
+!    read(IIN) Mxx(i_source),Mzz(i_source),Mxz(i_source)
+!  enddo
+!
+!  !if (AXISYM) factor = factor/(TWO*PI)   !!!!! axisym TODO verify
+!
+!  end subroutine setup_sources_read_file
+
+
+!
+!----------------------------------------------------------------------------
+!
+
   subroutine setup_receivers()
 
-  use constants,only: NGLLX,NGLLZ,NDIM,IMAIN,IIN,MAX_STRING_LEN
-#ifndef USE_MPI
-  use constants,only: IOUT
+#ifdef WITH_MPI
+  use constants, only: IMAIN,IIN,mygroup,IN_DATA_FILES
+#else
+  use constants, only: IMAIN,IIN,mygroup,IN_DATA_FILES,OUTPUT_FILES,IOUT
 #endif
-
-  use specfem_par, only: coord,ibool,nglob,nspec, &
-                         ispec_selected_rec, &
-                         NPROC,myrank,coorg,knods,ngnod, &
-                         xigll,zigll,npgeo, &
-                         nrec,nrecloc,recloc,islice_selected_rec,st_xval,st_zval, &
-                         xi_receiver,gamma_receiver,station_name,network_name, &
-                         x_final_receiver,z_final_receiver, &
-                         x_source,z_source
+  use specfem_par
 
   implicit none
 
   ! Local variables
-  integer :: irec,nrec_tot_found
+  integer :: nrec_tot_found
   integer :: ier
+  integer :: irec,irec_local
 
-  character(len=MAX_STRING_LEN) :: dummystring
+  character(len=MAX_STRING_LEN) :: stations_filename,path_to_add,dummystring
 
   ! user output
   call synchronize_all()
@@ -212,9 +351,20 @@
     call flush_IMAIN()
   endif
 
+  stations_filename = trim(IN_DATA_FILES)//'STATIONS'
+
+  ! see if we are running several independent runs in parallel
+  ! if so, add the right directory for that run
+  ! (group numbers start at zero, but directory names start at run0001, thus we add one)
+  ! a negative value for "mygroup" is a convention that indicates that groups (i.e. sub-communicators, one per run) are off
+  if (NUMBER_OF_SIMULTANEOUS_RUNS > 1 .and. mygroup >= 0) then
+    write(path_to_add,"('run',i4.4,'/')") mygroup + 1
+    stations_filename = path_to_add(1:len_trim(path_to_add))//stations_filename(1:len_trim(stations_filename))
+  endif
+
   ! get number of stations from receiver file
-  open(unit=IIN,file='DATA/STATIONS',status='old',action='read',iostat=ier)
-  if (ier /= 0) call exit_MPI(myrank,'Error opening DATA/STATIONS file')
+  open(unit=IIN,file=trim(stations_filename),status='old',action='read',iostat=ier)
+  if (ier /= 0) call exit_MPI(myrank,'No file '//trim(stations_filename)//', exit')
   nrec = 0
   do while(ier == 0)
     read(IIN,"(a)",iostat=ier) dummystring
@@ -243,7 +393,7 @@
            islice_selected_rec(nrec), &
            x_final_receiver(nrec), &
            z_final_receiver(nrec),stat=ier)
-  if (ier /= 0) stop 'Error allocating receiver arrays'
+  if (ier /= 0) call stop_the_code('Error allocating receiver arrays')
 
   ! locate receivers in the mesh
   call locate_receivers(ibool,coord,nspec,nglob,xigll,zigll, &
@@ -251,18 +401,17 @@
                         st_xval,st_zval,ispec_selected_rec, &
                         xi_receiver,gamma_receiver,station_name,network_name, &
                         x_source(1),z_source(1), &
-                        coorg,knods,ngnod,npgeo, &
+                        coorg,knods,NGNOD,npgeo, &
                         x_final_receiver,z_final_receiver)
 
 !! DK DK this below not supported in the case of MPI yet, we should do a MPI_GATHER() of the values
 !! DK DK and use "if (myrank == islice_selected_rec(irec)) then" to display the right sources
 !! DK DK and receivers carried by each mesh slice, and not fictitious values coming from other slices
-  irec = 0
-#ifndef USE_MPI
+#ifndef WITH_MPI
   if (myrank == 0) then
      ! write out actual station locations (compare with STATIONS from meshfem2D)
      ! NOTE: this will be written out even if use_existing_STATIONS = .true.
-     open(unit=IOUT,file='OUTPUT_FILES/for_information_STATIONS_actually_used',status='unknown')
+     open(unit=IOUT,file=trim(OUTPUT_FILES)//'for_information_STATIONS_actually_used',status='unknown')
      do irec = 1,nrec
         write(IOUT,"('S',i4.4,'    AA ',f20.7,1x,f20.7,'       0.0         0.0')") &
              irec,x_final_receiver(irec),z_final_receiver(irec)
@@ -279,6 +428,7 @@
   if (myrank == 0) then
     ! checks total
     if (nrec_tot_found /= nrec) then
+      print *,'nrec_tot_found,nrec (should be equal) = ',nrec_tot_found,nrec
       call exit_MPI(myrank,'problem when dispatching the receivers')
     endif
 
@@ -296,6 +446,23 @@
   ! checks if acoustic receiver is exactly on the free surface because pressure is zero there
   call setup_receivers_check_acoustic()
 
+  if (USE_TRICK_FOR_BETTER_PRESSURE .and. (NSIGTYPE /= 1)) then
+    call stop_the_code('USE_TRICK_FOR_BETTER_PRESSURE : only pressure can be recorded')
+    if (seismotypeVec(1) /= 4) &
+      call stop_the_code('USE_TRICK_FOR_BETTER_PRESSURE : seismograms must record pressure')
+  endif
+
+  ! create a local array for receivers
+  allocate(ispec_selected_rec_loc(nrecloc))
+  irec_local = 0
+  do irec = 1, nrec
+    if (myrank == islice_selected_rec(irec)) then
+      if (irec_local > nrecloc) call stop_the_code('Error with the number of local sources')
+      irec_local = irec_local + 1
+      ispec_selected_rec_loc(irec_local)  = ispec_selected_rec(irec)
+    endif
+  enddo
+
   end subroutine setup_receivers
 
 
@@ -307,10 +474,10 @@
 
 ! checks if acoustic receiver is exactly on the free surface because pressure is zero there
 
-  use constants,only: NGLLX,NGLLZ,IMAIN
+  use constants, only: NGLLX,NGLLZ,IMAIN
 
   use specfem_par, only: myrank,ispec_selected_rec,nrecloc,recloc, &
-                         xi_receiver,gamma_receiver,seismotype, &
+                         xi_receiver,gamma_receiver,seismotypeVec,NSIGTYPE, &
                          nelem_acoustic_surface,acoustic_surface,ispec_is_acoustic
   implicit none
 
@@ -329,26 +496,34 @@
     do irecloc = 1,nrecloc
       irec = recloc(irecloc)
       if (ispec_is_acoustic(ispec) .and. ispec == ispec_selected_rec(irec)) then
-        if ((izmin==1 .and. izmax==1 .and. ixmin==1 .and. ixmax==NGLLX .and. &
-        gamma_receiver(irec) < -0.99d0) .or.&
-        (izmin==NGLLZ .and. izmax==NGLLZ .and. ixmin==1 .and. ixmax==NGLLX .and. &
-        gamma_receiver(irec) > 0.99d0) .or.&
-        (izmin==1 .and. izmax==NGLLZ .and. ixmin==1 .and. ixmax==1 .and. &
-        xi_receiver(irec) < -0.99d0) .or.&
-        (izmin==1 .and. izmax==NGLLZ .and. ixmin==NGLLX .and. ixmax==NGLLX .and. &
-        xi_receiver(irec) > 0.99d0) .or.&
-        (izmin==1 .and. izmax==1 .and. ixmin==1 .and. ixmax==1 .and. &
-        gamma_receiver(irec) < -0.99d0 .and. xi_receiver(irec) < -0.99d0) .or.&
-        (izmin==1 .and. izmax==1 .and. ixmin==NGLLX .and. ixmax==NGLLX .and. &
-        gamma_receiver(irec) < -0.99d0 .and. xi_receiver(irec) > 0.99d0) .or.&
-        (izmin==NGLLZ .and. izmax==NGLLZ .and. ixmin==1 .and. ixmax==1 .and. &
-        gamma_receiver(irec) > 0.99d0 .and. xi_receiver(irec) < -0.99d0) .or.&
-        (izmin==NGLLZ .and. izmax==NGLLZ .and. ixmin==NGLLX .and. ixmax==NGLLX .and. &
+        if ((izmin == 1 .and. izmax == 1 .and. ixmin == 1 .and. ixmax == NGLLX .and. &
+        gamma_receiver(irec) < -0.99d0) .or. &
+        (izmin == NGLLZ .and. izmax == NGLLZ .and. ixmin == 1 .and. ixmax == NGLLX .and. &
+        gamma_receiver(irec) > 0.99d0) .or. &
+        (izmin == 1 .and. izmax == NGLLZ .and. ixmin == 1 .and. ixmax == 1 .and. &
+        xi_receiver(irec) < -0.99d0) .or. &
+        (izmin == 1 .and. izmax == NGLLZ .and. ixmin == NGLLX .and. ixmax == NGLLX .and. &
+        xi_receiver(irec) > 0.99d0) .or. &
+        (izmin == 1 .and. izmax == 1 .and. ixmin == 1 .and. ixmax == 1 .and. &
+        gamma_receiver(irec) < -0.99d0 .and. xi_receiver(irec) < -0.99d0) .or. &
+        (izmin == 1 .and. izmax == 1 .and. ixmin == NGLLX .and. ixmax == NGLLX .and. &
+        gamma_receiver(irec) < -0.99d0 .and. xi_receiver(irec) > 0.99d0) .or. &
+        (izmin == NGLLZ .and. izmax == NGLLZ .and. ixmin == 1 .and. ixmax == 1 .and. &
+        gamma_receiver(irec) > 0.99d0 .and. xi_receiver(irec) < -0.99d0) .or. &
+        (izmin == NGLLZ .and. izmax == NGLLZ .and. ixmin == NGLLX .and. ixmax == NGLLX .and. &
         gamma_receiver(irec) > 0.99d0 .and. xi_receiver(irec) > 0.99d0)) then
           ! checks
-          if (seismotype == 4) then
-            call exit_MPI(myrank,'an acoustic pressure receiver cannot be located exactly '// &
-                            'on the free surface because pressure is zero there')
+          if (any(seismotypeVec == 4)) then
+            if (NSIGTYPE == 1) then
+              call exit_MPI(myrank,'an acoustic pressure receiver cannot be located exactly '// &
+                                   'on the free surface because pressure is zero there')
+            else
+              write(IMAIN,*) '**********************************************************************'
+              write(IMAIN,*) '*** Warning: the acoustic receivers located on the free surface    ***'
+              write(IMAIN,*) '*** Warning: will record 0 !!                                      ***'
+              write(IMAIN,*) '**********************************************************************'
+              write(IMAIN,*)
+            endif
           else
             write(IMAIN,*) '**********************************************************************'
             write(IMAIN,*) '*** Warning: acoustic receiver located exactly on the free surface ***'
@@ -368,26 +543,20 @@
 !-----------------------------------------------------------------------------------------
 !
 
-
   subroutine setup_adjoint_sources
 
 ! compute source array for adjoint source
 
-  use constants,only: CUSTOM_REAL,NGLLX,NGLLZ,NDIM,MAX_STRING_LEN,IMAIN
+  use constants, only: CUSTOM_REAL,NGLLX,NGLLZ,NDIM,MAX_STRING_LEN,IMAIN
 
-  use specfem_par,only: nadj_rec_local,nrec,nrecloc,NSTEP,NPROC,SIMULATION_TYPE,SU_FORMAT, &
-                        adj_sourcearrays, &
-                        myrank,islice_selected_rec,seismotype, &
-                        xi_receiver,gamma_receiver, &
-                        network_name,station_name,GPU_MODE
-
-  use specfem_par_gpu,only: source_adjointe
+  use specfem_par, only: nadj_rec_local,nrec,nrecloc,NSTEP,NPROC,SIMULATION_TYPE,SU_FORMAT, &
+                        myrank,islice_selected_rec,seismotypeVec,NSIGTYPE, &
+                        network_name,station_name,source_adjoint
 
   implicit none
 
   ! local parameters
-  integer :: irec,irec_local
-  real(kind=CUSTOM_REAL), dimension(:,:,:,:), allocatable :: adj_sourcearray
+  integer :: irec,irec_local, seismotype_adj,ier
   character(len=MAX_STRING_LEN) :: adj_source_file
 
   ! number of adjoint receivers in this slice
@@ -406,9 +575,18 @@
       call flush_IMAIN()
     endif
 
-    ! for GPU-version
-    if (GPU_MODE) then
-      allocate(source_adjointe(nrecloc,NSTEP,2))
+    allocate(source_adjoint(nrecloc,NSTEP,2),stat=ier)
+    if (ier /= 0) stop 'Error allocating array source_adjoint'
+    source_adjoint(:,:,:) = 0._CUSTOM_REAL
+
+    if (NSIGTYPE > 1) call exit_MPI(myrank,'only one signal can be computed if running an adjoint simulation (e.g. seismotype = 1)')
+
+    seismotype_adj = seismotypeVec(1)
+
+    ! user output
+    if (myrank == 0) then
+      write(IMAIN,*) '  adjoint source type:', seismotype_adj
+      call flush_IMAIN()
     endif
 
     ! counts number of adjoint sources in this slice
@@ -424,14 +602,6 @@
       endif
     enddo
 
-    ! array for all adjoint sources
-    if (nadj_rec_local > 0)  then
-      allocate(adj_sourcearrays(nadj_rec_local,NSTEP,NDIM,NGLLX,NGLLZ))
-    else
-      allocate(adj_sourcearrays(1,1,1,1,1))
-    endif
-    adj_sourcearrays(:,:,:,:,:) = 0._CUSTOM_REAL
-
     ! reads in adjoint source files
     if (.not. SU_FORMAT) then
       ! user output
@@ -440,9 +610,6 @@
         call flush_IMAIN()
       endif
 
-      ! temporary array
-      allocate(adj_sourcearray(NSTEP,NDIM,NGLLX,NGLLZ))
-
       ! reads in ascii adjoint source files **.adj
       irec_local = 0
       do irec = 1, nrec
@@ -450,16 +617,11 @@
         if (myrank == islice_selected_rec(irec)) then
           irec_local = irec_local + 1
           adj_source_file = trim(network_name(irec))//'.'//trim(station_name(irec))
-
-          call compute_arrays_adj_source(xi_receiver(irec),gamma_receiver(irec),irec_local,adj_source_file,adj_sourcearray)
-
-          adj_sourcearrays(irec_local,:,:,:,:) = adj_sourcearray(:,:,:,:)
+          call read_adj_source(irec_local,seismotype_adj,adj_source_file)
         endif
       enddo
       ! checks
-      if (irec_local /= nadj_rec_local) stop 'Error invalid number of local adjoint sources found'
-      ! frees temporary array
-      deallocate(adj_sourcearray)
+      if (irec_local /= nadj_rec_local) call stop_the_code('Error invalid number of local adjoint sources found')
     else
       ! user output
       if (myrank == 0) then
@@ -468,17 +630,15 @@
       endif
 
       ! (SU_FORMAT)
-      call compute_arrays_adj_source_SU(seismotype)
+      call read_adj_source_SU(seismotype_adj)
     endif
 
     ! user output
     if (myrank == 0) then
       write(IMAIN,*) '  number of adjoint sources = ',nrec
+      write(IMAIN,*) '  adjoint sources min/max   = ',minval(source_adjoint(:,:,:)),maxval(source_adjoint(:,:,:))
       call flush_IMAIN()
     endif
-  else
-    ! dummy allocation
-    allocate(adj_sourcearrays(1,1,1,1,1))
   endif ! SIMULATION_TYPE == 3
 
   ! synchronizes all processes
@@ -494,11 +654,7 @@
 
 ! tangential computation
 
-#ifdef USE_MPI
-  use mpi
-#endif
-
-  use constants,only: PI,HUGEVAL
+  use constants, only: PI,HUGEVAL,OUTPUT_FILES,IMAIN
   use specfem_par
 
   implicit none
@@ -509,8 +665,14 @@
   integer :: irecloc
   double precision :: x_final_receiver_dummy, z_final_receiver_dummy
 
-  ! for Lagrange interpolants
-  double precision, external :: hgll, hglj
+  integer  :: n1_tangential_detection_curve
+  integer, dimension(4) :: n_tangential_detection_curve
+  integer, dimension(:), allocatable  :: rec_tangential_detection_curve
+
+  double precision :: distmin, dist_current, anglesource_recv
+  double precision, dimension(:), allocatable :: dist_tangential_detection_curve
+
+  integer, dimension(:), allocatable :: source_courbe_eros
 
   ! receiver arrays
   if (nrecloc > 0) then
@@ -524,11 +686,17 @@
            cosrot_irec(nrecloc), &
            sinrot_irec(nrecloc), &
            rec_tangential_detection_curve(nrecloc),stat=ier)
-  if (ier /= 0) stop 'Error allocating tangential arrays'
+  if (ier /= 0) call stop_the_code('Error allocating tangential arrays')
+
+  allocate(dist_tangential_detection_curve(nnodes_tangential_curve),stat=ier)
+  if (ier /= 0) call stop_the_code('Error allocating tangential arrays')
+
+  allocate(source_courbe_eros(NSOURCES),stat=ier)
+  if (ier /= 0) call stop_the_code('Error allocating source_courbe_eros array')
 
   ! checks angle
   if (rec_normal_to_surface .and. abs(anglerec) > 1.d-6) &
-    stop 'anglerec should be zero when receivers are normal to the topography'
+    call stop_the_code('anglerec should be zero when receivers are normal to the topography')
 
   ! convert receiver angle to radians
   anglerec = anglerec * pi / 180.d0
@@ -540,6 +708,12 @@
   ! tangential computation
   ! for receivers
   if (rec_normal_to_surface) then
+    ! user output
+    if (myrank == 0) then
+      write(IMAIN,*) '  computing tangential to surface for receivers'
+      call flush_IMAIN()
+    endif
+
     irecloc = 0
     do irec = 1, nrec
       if (myrank == islice_selected_rec(irec)) then
@@ -568,7 +742,6 @@
                                    nodes_tangential_curve(2,n_tangential_detection_curve(3)), &
                                    nodes_tangential_curve(2,n_tangential_detection_curve(4)) )
       endif
-
     enddo
     cosrot_irec(:) = cos(anglerec_irec(:))
     sinrot_irec(:) = sin(anglerec_irec(:))
@@ -576,6 +749,12 @@
 
   ! for the source
   if (force_normal_to_surface) then
+    ! user output
+    if (myrank == 0) then
+      write(IMAIN,*) '  computing tangential to surface for sources'
+      call flush_IMAIN()
+    endif
+
     do i_source = 1,NSOURCES
       if (myrank == islice_selected_source(i_source)) then
         distmin = HUGEVAL
@@ -606,36 +785,42 @@
                                     nodes_tangential_curve(2,n_tangential_detection_curve(4)) )
 
         source_courbe_eros(i_source) = n1_tangential_detection_curve
-        if (myrank == 0 .and. myrank == islice_selected_source(i_source)) then
-          source_courbe_eros(i_source) = n1_tangential_detection_curve
-          anglesource_recv = anglesource(i_source)
-#ifdef USE_MPI
-        else if (myrank == 0) then
-          call MPI_recv(source_courbe_eros(i_source),1,MPI_INTEGER, &
-                        MPI_ANY_SOURCE,42,MPI_COMM_WORLD,MPI_STATUS_IGNORE,ier)
-          call MPI_recv(anglesource_recv,1,MPI_DOUBLE_PRECISION, &
-                        MPI_ANY_SOURCE,43,MPI_COMM_WORLD,MPI_STATUS_IGNORE,ier)
-
-        else if (myrank == islice_selected_source(i_source)) then
-          call MPI_send(n1_tangential_detection_curve,1,MPI_INTEGER,0,42,MPI_COMM_WORLD,ier)
-          call MPI_send(anglesource(i_source),1,MPI_DOUBLE_PRECISION,0,43,MPI_COMM_WORLD,ier)
-#endif
-        endif
-
-#ifdef USE_MPI
-        call bcast_all_singledp(anglesource_recv)
-        anglesource(i_source) = anglesource_recv
-#endif
-
-
       endif
+
+      ! collect results
+      if (myrank == 0 .and. myrank == islice_selected_source(i_source)) then
+        source_courbe_eros(i_source) = n1_tangential_detection_curve
+        anglesource_recv = anglesource(i_source)
+#ifdef WITH_MPI
+      else if (myrank == 0) then
+        call recv_any_singlei(source_courbe_eros(i_source), 42)
+        call recv_any_singledp(anglesource_recv, 43)
+
+      else if (myrank == islice_selected_source(i_source)) then
+        call send_singlei(n1_tangential_detection_curve, 0, 42)
+        call send_singledp(anglesource(i_source), 0, 43)
+#endif
+      endif
+
+#ifdef WITH_MPI
+      call bcast_all_singledp(anglesource_recv)
+      anglesource(i_source) = anglesource_recv
+#endif
+
     enddo ! do i_source= 1,NSOURCES
   endif !  if (force_normal_to_surface)
 
 ! CHRIS --- how to deal with multiple source. Use first source now. ---
 ! compute distance from source to receivers following the curve
   if (force_normal_to_surface .and. rec_normal_to_surface) then
-    dist_tangential_detection_curve(source_courbe_eros(1)) = 0
+    ! user output
+    if (myrank == 0) then
+      write(IMAIN,*) '  finding closest distance of tangentials for forces and receivers'
+      call flush_IMAIN()
+    endif
+
+    dist_tangential_detection_curve(source_courbe_eros(1)) = 0.d0
+
     do i = source_courbe_eros(1)+1, nnodes_tangential_curve
       dist_tangential_detection_curve(i) = dist_tangential_detection_curve(i-1) + &
           sqrt((nodes_tangential_curve(1,i)-nodes_tangential_curve(1,i-1))**2 + &
@@ -649,6 +834,7 @@
           sqrt((nodes_tangential_curve(1,i)-nodes_tangential_curve(1,i-1))**2 + &
           (nodes_tangential_curve(2,i)-nodes_tangential_curve(2,i-1))**2)
     enddo
+
     do i = source_courbe_eros(1)-1, 1, -1
       dist_current = dist_tangential_detection_curve(i+1) + &
           sqrt((nodes_tangential_curve(1,i)-nodes_tangential_curve(1,i+1))**2 + &
@@ -660,9 +846,11 @@
     dist_current = dist_tangential_detection_curve(1) + &
        sqrt((nodes_tangential_curve(1,1)-nodes_tangential_curve(1,nnodes_tangential_curve))**2 + &
        (nodes_tangential_curve(2,1)-nodes_tangential_curve(2,nnodes_tangential_curve))**2)
+
     if (dist_current < dist_tangential_detection_curve(nnodes_tangential_curve)) then
       dist_tangential_detection_curve(nnodes_tangential_curve) = dist_current
     endif
+
     do i = nnodes_tangential_curve-1, source_courbe_eros(1)+1, -1
       dist_current = dist_tangential_detection_curve(i+1) + &
           sqrt((nodes_tangential_curve(1,i)-nodes_tangential_curve(1,i+1))**2 + &
@@ -672,9 +860,10 @@
       endif
     enddo
 
+    ! Don't remove that comment: FN2SNSR. The following lines would have to be modified for compatibility with
+    ! NUMBER_OF_SIMULTANEOUS_RUNS
     if (myrank == 0) then
-      open(unit=11,file='OUTPUT_FILES/dist_rec_tangential_detection_curve', &
-            form='formatted', status='unknown')
+      open(unit=11,file=trim(OUTPUT_FILES)//'dist_rec_tangential_detection_curve',form='formatted', status='unknown')
     endif
 
     irecloc = 0
@@ -686,44 +875,43 @@
           n1_tangential_detection_curve = rec_tangential_detection_curve(irecloc)
           x_final_receiver_dummy = x_final_receiver(irec)
           z_final_receiver_dummy = z_final_receiver(irec)
-#ifdef USE_MPI
+#ifdef WITH_MPI
         else
-
-          call MPI_RECV(n1_tangential_detection_curve,1,MPI_INTEGER,&
-             islice_selected_rec(irec),irec,MPI_COMM_WORLD,MPI_STATUS_IGNORE,ier)
-          call MPI_RECV(x_final_receiver_dummy,1,MPI_DOUBLE_PRECISION,&
-             islice_selected_rec(irec),irec,MPI_COMM_WORLD,MPI_STATUS_IGNORE,ier)
-          call MPI_RECV(z_final_receiver_dummy,1,MPI_DOUBLE_PRECISION,&
-             islice_selected_rec(irec),irec,MPI_COMM_WORLD,MPI_STATUS_IGNORE,ier)
-
+          call recv_singlei(n1_tangential_detection_curve, islice_selected_rec(irec), irec)
+          call recv_singledp(x_final_receiver_dummy, islice_selected_rec(irec), irec)
+          call recv_singledp(z_final_receiver_dummy, islice_selected_rec(irec), irec)
 #endif
         endif
 
-#ifdef USE_MPI
+#ifdef WITH_MPI
       else
         if (myrank == islice_selected_rec(irec)) then
           irecloc = irecloc + 1
-          call MPI_SEND(rec_tangential_detection_curve(irecloc),1,MPI_INTEGER,0,irec,MPI_COMM_WORLD,ier)
-          call MPI_SEND(x_final_receiver(irec),1,MPI_DOUBLE_PRECISION,0,irec,MPI_COMM_WORLD,ier)
-          call MPI_SEND(z_final_receiver(irec),1,MPI_DOUBLE_PRECISION,0,irec,MPI_COMM_WORLD,ier)
+          call send_singlei(rec_tangential_detection_curve(irecloc), 0, irec)
+          call send_singledp(x_final_receiver(irec), 0, irec)
+          call send_singledp(z_final_receiver(irec), 0, irec)
         endif
 #endif
 
       endif
       if (myrank == 0) then
         write(11,*) dist_tangential_detection_curve(n1_tangential_detection_curve)
-        write(12,*) x_final_receiver_dummy
-        write(13,*) z_final_receiver_dummy
+        !write(12,*) x_final_receiver_dummy
+        !write(13,*) z_final_receiver_dummy
       endif
     enddo
 
     if (myrank == 0) then
       close(11)
-      close(12)
-      close(13)
+      !close(12)
+      !close(13)
     endif
 
   endif ! force_normal_to_surface
+
+  deallocate(rec_tangential_detection_curve)
+  deallocate(dist_tangential_detection_curve)
+  deallocate(source_courbe_eros)
 
   ! synchronizes all processes
   call synchronize_all()
@@ -736,9 +924,9 @@
 
   subroutine setup_source_interpolation()
 
-  use constants,only: NDIM,NGLLX,NGLLZ,NGLJ,ZERO,CUSTOM_REAL
+  use constants, only: NDIM,NGLLX,NGLLZ,NGLJ,ZERO,CUSTOM_REAL,IMAIN
 
-  use specfem_par,only: myrank,nspec,NSOURCES,source_type,anglesource,P_SV, &
+  use specfem_par, only: myrank,nspec,NSOURCES,initialfield,source_type,anglesource,P_SV, &
     sourcearrays,Mxx,Mxz,Mzz, &
     ispec_is_acoustic,ispec_is_elastic,ispec_is_poroelastic, &
     ispec_selected_source,islice_selected_source, &
@@ -758,13 +946,24 @@
   ! allocates Lagrange interpolators for sources
   allocate(hxis_store(NSOURCES,NGLLX), &
            hgammas_store(NSOURCES,NGLLZ),stat=ier)
-  if (ier /= 0) stop 'Error allocating source h**_store arrays'
+  if (ier /= 0) call stop_the_code('Error allocating source h**_store arrays')
 
   ! initializes
   hxis_store(:,:) = ZERO
   hgammas_store(:,:) = ZERO
 
   sourcearrays(:,:,:,:) = 0._CUSTOM_REAL
+
+  ! check if anything left to do
+  if (initialfield) then
+    ! user output
+    if (myrank == 0) then
+      write(IMAIN,*) 'using initialfield instead of source arrays'
+      call flush_IMAIN()
+    endif
+    ! all done
+    return
+  endif
 
   ! define and store Lagrange interpolators at all the sources
   do i_source = 1,NSOURCES
@@ -778,7 +977,7 @@
       if (AXISYM) then
         if (is_on_the_axis(ispec)) then
           call lagrange_any(xi_source(i_source),NGLJ,xiglj,hxis,hpxis)
-          !do j = 1,NGLJ ! AB AB same result with that loop
+          !do j = 1,NGLJ ! ABAB same result with that loop, this is good
           !  hxis(j) = hglj(j-1,xi_source(i_source),xiglj,NGLJ)
           !enddo
         else
@@ -812,8 +1011,15 @@
             if (ispec_is_elastic(ispec)) then
               if (P_SV) then
                 ! P_SV case
-                sourcearray(1,i,j) = - sin(anglesource(i_source)) * hlagrange
-                sourcearray(2,i,j) =   cos(anglesource(i_source)) * hlagrange
+!               sourcearray(1,i,j) = - sin(anglesource(i_source)) * hlagrange
+!               sourcearray(2,i,j) =   cos(anglesource(i_source)) * hlagrange
+!! DK DK May 2018: the sign of the source was inverted compared to the analytical solution for a simple elastic benchmark
+!! DK DK May 2018: with a force source (the example that is in EXAMPLES/check_absolute_amplitude_of_force_source_seismograms),
+!! DK DK May 2018: which means that the sign was not right here. I changed it. Please do NOT revert that change,
+!! DK DK May 2018: otherwise the code will give inverted seismograms compared to analytical solutions for benchmarks,
+!! DK DK May 2018: and more generally compared to reality
+                sourcearray(1,i,j) = + sin(anglesource(i_source)) * hlagrange
+                sourcearray(2,i,j) = - cos(anglesource(i_source)) * hlagrange
               else
                 ! SH case (membrane)
                 sourcearray(:,i,j) = hlagrange
@@ -822,8 +1028,15 @@
 
             ! source element is poroelastic
             if (ispec_is_poroelastic(ispec)) then
-              sourcearray(1,i,j) = - sin(anglesource(i_source)) * hlagrange
-              sourcearray(2,i,j) =   cos(anglesource(i_source)) * hlagrange
+!             sourcearray(1,i,j) = - sin(anglesource(i_source)) * hlagrange
+!             sourcearray(2,i,j) =   cos(anglesource(i_source)) * hlagrange
+!! DK DK May 2018: the sign of the source was inverted compared to the analytical solution for a simple elastic benchmark
+!! DK DK May 2018: with a force source (the example that is in EXAMPLES/check_absolute_amplitude_of_force_source_seismograms),
+!! DK DK May 2018: which means that the sign was not right here. I changed it. Please do NOT revert that change,
+!! DK DK May 2018: otherwise the code will give inverted seismograms compared to analytical solutions for benchmarks,
+!! DK DK May 2018: and more generally compared to reality
+              sourcearray(1,i,j) = + sin(anglesource(i_source)) * hlagrange
+              sourcearray(2,i,j) = - cos(anglesource(i_source)) * hlagrange
             endif
 
           enddo
@@ -846,7 +1059,7 @@
       end select
 
       ! stores sourcearray for all sources
-      sourcearrays(i_source,:,:,:) = sourcearray(:,:,:)
+      sourcearrays(:,:,:,i_source) = sourcearray(:,:,:)
 
     endif
   enddo
@@ -863,50 +1076,48 @@
 
   subroutine setup_receiver_interpolation()
 
-  use constants,only: NGLLX,NGLLZ,NGLJ
+  use constants, only: NGLLX,NGLLZ,NGLJ
 
-  use specfem_par,only: myrank,nrec,nrecloc, &
+  use specfem_par, only: myrank,nrec,nrecloc, &
     ispec_selected_rec,islice_selected_rec, &
     xigll,zigll, &
-    hxir_store,hgammar_store,xi_receiver,gamma_receiver,hxir,hpxir,hgammar,hpgammar, &
-    AXISYM,is_on_the_axis,xiglj
-
-  use specfem_par_gpu,only: xir_store_loc,gammar_store_loc
+    xi_receiver,gamma_receiver,hxir,hpxir,hgammar,hpgammar, &
+    AXISYM,is_on_the_axis,xiglj,xir_store_loc,gammar_store_loc
 
   implicit none
 
   ! local parameters
   integer :: irec,irec_local,ier
 
-  ! allocate Lagrange interpolators for receivers
-  allocate(hxir_store(nrec,NGLLX), &
-           hgammar_store(nrec,NGLLZ),stat=ier)
-  if (ier /= 0) stop 'Error allocating receiver h**_store arrays'
-
+  ! allocate Lagrange interpolants for receivers
   allocate(xir_store_loc(nrecloc,NGLLX), &
            gammar_store_loc(nrecloc,NGLLZ),stat=ier)
-  if (ier /= 0) stop 'Error allocating local receiver h**_store arrays'
+  if (ier /= 0) call stop_the_code('Error allocating local receiver h**_store arrays')
 
-  ! define and store Lagrange interpolators at all the receivers
+  ! define and store Lagrange interpolants at all the receivers
   irec_local = 0
   do irec = 1,nrec
     if (AXISYM) then
       if (is_on_the_axis(ispec_selected_rec(irec)) .and. myrank == islice_selected_rec(irec)) then
         call lagrange_any(xi_receiver(irec),NGLJ,xiglj,hxir,hpxir)
-        !do j = 1,NGLJ ! AB AB Same result with that loop
-        !  hxir(j) = hglj(j-1,xi_receiver(irec),xiglj,NGLJ)
+        !do j = 1,NGLJ ! ABAB Exactly same result with that loop. This is good
+        !  hxir2(j) = hglj(j-1,xi_receiver(irec),xiglj,NGLJ)
+        !  print *,hxir(j),' = ',hxir2(j)
         !enddo
       else
         call lagrange_any(xi_receiver(irec),NGLLX,xigll,hxir,hpxir)
       endif
     else
       call lagrange_any(xi_receiver(irec),NGLLX,xigll,hxir,hpxir)
+      !do j = 1,NGLLX !do j = 1,NGLJ ! ABAB Exactly same result with that loop. This is good
+      !  hxir2(j) = hgll(j-1,xi_receiver(irec),xigll,NGLLX)
+      !  print *,hxir(j),' = ',hxir2(j)
+      !enddo
+      ! Defined:
+      !  double precision, dimension(NGLL) :: hxir2
+      !  double precision, external :: hglj,hgll
     endif
     call lagrange_any(gamma_receiver(irec),NGLLZ,zigll,hgammar,hpgammar)
-
-    ! stores Lagrangians for receiver
-    hxir_store(irec,:) = hxir(:)
-    hgammar_store(irec,:) = hgammar(:)
 
     ! local receivers in this slice
     if (myrank == islice_selected_rec(irec)) then
@@ -920,4 +1131,56 @@
   call synchronize_all()
 
   end subroutine setup_receiver_interpolation
+
+!
+!-----------------------------------------------------------------------------------------
+!
+
+  subroutine setup_receiver_seismograms()
+
+  use constants, only: ZERO
+
+  use specfem_par, only: nrecloc,NSIGTYPE, &
+    NSTEP,NTSTEP_BETWEEN_OUTPUT_SEISMOS,NTSTEP_BETWEEN_OUTPUT_SAMPLE,nlength_seismogram, &
+    sisux,sisuz,siscurl, &
+    SU_FORMAT
+
+  implicit none
+
+  ! local parameters
+  integer :: ier
+
+  ! subsets used to save seismograms must not be larger than the whole time series
+  if (NTSTEP_BETWEEN_OUTPUT_SEISMOS > NSTEP) NTSTEP_BETWEEN_OUTPUT_SEISMOS = NSTEP
+
+  ! seismogram array length
+  nlength_seismogram = NTSTEP_BETWEEN_OUTPUT_SEISMOS/NTSTEP_BETWEEN_OUTPUT_SAMPLE
+
+  ! allocate seismogram arrays
+  if (nrecloc > 0) then
+    allocate(sisux(nlength_seismogram,nrecloc,NSIGTYPE), &
+             sisuz(nlength_seismogram,nrecloc,NSIGTYPE), &
+             siscurl(nlength_seismogram,nrecloc,NSIGTYPE),stat=ier)
+    if (ier /= 0) call stop_the_code('Error allocating seismogram arrays')
+  else
+    ! dummy arrays
+    allocate(sisux(1,1,1),sisuz(1,1,1),siscurl(1,1,1),stat=ier)
+    if (ier /= 0) call stop_the_code('Error allocating seismogram arrays')
+  endif
+  sisux(:,:,:) = ZERO ! double precision zero
+  sisuz(:,:,:) = ZERO
+  siscurl(:,:,:) = ZERO
+
+  ! checks SU_FORMAT output length
+  if (SU_FORMAT .and. (NSTEP/NTSTEP_BETWEEN_OUTPUT_SAMPLE > 32768)) then
+    print *
+    print *,"!!! BEWARE !!! Two many samples for SU format ! The .su file created won't be usable"
+    print *
+    call stop_the_code('Error allocating seismogram arrays')
+  endif
+
+  ! synchronizes all processes
+  call synchronize_all()
+
+  end subroutine setup_receiver_seismograms
 

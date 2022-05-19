@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -33,233 +33,204 @@
 
 ! for viscoelastic solver
 
-  subroutine compute_attenuation_viscoelastic(displ_elastic,displ_elastic_old,ispec_is_elastic, &
-                                              PML_BOUNDARY_CONDITIONS,e1,e11,e13)
+  subroutine compute_attenuation_viscoelastic(e1,e11,e13,dux_dxl,dux_dzl,duz_dxl,duz_dzl,dux_dxl_old,duz_dzl_old, &
+                                              dux_dzl_plus_duz_dxl_old,PML_BOUNDARY_CONDITIONS,i,j,ispec, &
+                                              e1_sum,e11_sum,e13_sum)
 
   ! updates memory variable in viscoelastic simulation
 
-  ! compute forces for the elastic elements
-  use constants,only: CUSTOM_REAL,NGLLX,NGLLZ,NDIM
+  use constants, only: CUSTOM_REAL,NGLLX,NGLLZ,NDIM,TWO,ALPHA_LDDRK,BETA_LDDRK,C_LDDRK,ALPHA_RK4,BETA_RK4
 
-  use specfem_par, only: nglob,nspec,nspec_ATT,ATTENUATION_VISCOELASTIC_SOLID,N_SLS, &
-                         ibool,xix,xiz,gammax,gammaz,hprime_xx,hprime_zz
-
-  ! PML arrays
-  use specfem_par, only: ispec_is_PML
+  use specfem_par, only: nspec_ATT_el,ATTENUATION_VISCOELASTIC,N_SLS, &
+                         ispec_is_PML, &
+                         inv_tau_sigma_nu1,phi_nu1,inv_tau_sigma_nu2,phi_nu2,time_stepping_scheme,i_stage,deltat, &
+                         e1_LDDRK,e11_LDDRK,e13_LDDRK,e1_initial_rk,e11_initial_rk,e13_initial_rk, &
+                         e1_force_RK,e11_force_RK,e13_force_RK,A_newmark_nu1,B_newmark_nu1,A_newmark_nu2,B_newmark_nu2
 
   implicit none
 
-  real(kind=CUSTOM_REAL), dimension(NDIM,nglob),intent(in) :: displ_elastic,displ_elastic_old
-
-  logical,dimension(nspec),intent(in) :: ispec_is_elastic
-
+  real(kind=CUSTOM_REAL),intent(in) :: dux_dxl,dux_dzl,duz_dxl,duz_dzl
+  real(kind=CUSTOM_REAL),dimension(NGLLX,NGLLZ,nspec_ATT_el),intent(inout) :: dux_dxl_old,duz_dzl_old,dux_dzl_plus_duz_dxl_old
+  real(kind=CUSTOM_REAL),intent(out) :: e1_sum,e11_sum,e13_sum
+  integer, intent(in) :: i,j,ispec
   ! CPML coefficients and memory variables
-  logical,intent(in) :: PML_BOUNDARY_CONDITIONS
+  logical, intent(in) :: PML_BOUNDARY_CONDITIONS
+  real(kind=CUSTOM_REAL),dimension(N_SLS,NGLLX,NGLLZ,nspec_ATT_el),intent(inout) :: e1,e11,e13
 
-  real(kind=CUSTOM_REAL), dimension(NGLLX,NGLLZ,nspec_ATT,N_SLS),intent(inout) :: e1,e11,e13
-
-  ! local parameters
-  integer :: ispec
-  ! nsub1 denotes discrete time step n-1
-  real(kind=CUSTOM_REAL), dimension(NGLLX,NGLLZ,nspec) :: dux_dxl_n,dux_dzl_n,duz_dxl_n,duz_dzl_n
-  real(kind=CUSTOM_REAL), dimension(NGLLX,NGLLZ,nspec) :: dux_dxl_nsub1,dux_dzl_nsub1,duz_dxl_nsub1,duz_dzl_nsub1
-
-  ! checks if anything to do
-  if (.not. ATTENUATION_VISCOELASTIC_SOLID) return
-
-  ! compute Grad(displ_elastic) at time step n for attenuation
-  call compute_gradient_attenuation(displ_elastic,dux_dxl_n,duz_dxl_n, &
-        dux_dzl_n,duz_dzl_n,xix,xiz,gammax,gammaz,ibool,ispec_is_elastic,hprime_xx,hprime_zz,nspec,nglob)
-
-  ! compute Grad(disp_elastic_old) at time step n-1 for attenuation
-  call compute_gradient_attenuation(displ_elastic_old,dux_dxl_nsub1,duz_dxl_nsub1, &
-        dux_dzl_nsub1,duz_dzl_nsub1,xix,xiz,gammax,gammaz,ibool,ispec_is_elastic,hprime_xx,hprime_zz,nspec,nglob)
-
-  ! loop over spectral elements
-  do ispec = 1,nspec
-
-    ! attenuation is not implemented in acoustic (i.e. fluid) media for now, only in viscoelastic (i.e. solid) media
-    if (.not. ispec_is_elastic(ispec)) cycle
-
-    if ((.not. PML_BOUNDARY_CONDITIONS) .or. (PML_BOUNDARY_CONDITIONS .and. (.not. ispec_is_PML(ispec)))) then
-      call compute_attenuation_viscoelastic_update(ispec,e1,e11,e13, &
-                                                   dux_dxl_n,duz_dzl_n,duz_dxl_n,dux_dzl_n, &
-                                                   dux_dxl_nsub1,duz_dzl_nsub1,duz_dxl_nsub1,dux_dzl_nsub1)
-    endif
-  enddo
-
-  end subroutine compute_attenuation_viscoelastic
-
-!
-!-------------------------------------------------------------------------------------
-!
-
-
-  subroutine compute_attenuation_viscoelastic_update(ispec,e1,e11,e13, &
-                                                     dux_dxl_n,duz_dzl_n,duz_dxl_n,dux_dzl_n, &
-                                                     dux_dxl_nsub1,duz_dzl_nsub1,duz_dxl_nsub1,dux_dzl_nsub1)
-
-  use constants,only: NGLLX,NGLLZ,CUSTOM_REAL,TWO, &
-    CONVOLUTION_MEMORY_VARIABLES,ALPHA_LDDRK,BETA_LDDRK,C_LDDRK
-
-  use specfem_par, only: nspec,nspec_ATT,N_SLS, &
-                         inv_tau_sigma_nu1,phi_nu1,inv_tau_sigma_nu2,phi_nu2, &
-                         time_stepping_scheme,i_stage,deltat
-
-  ! LDDRK & RK
-  use specfem_par, only: e1_LDDRK,e11_LDDRK,e13_LDDRK, &
-                         e1_initial_rk,e11_initial_rk,e13_initial_rk,e1_force_RK, e11_force_RK, e13_force_RK
-
-  implicit none
-
-  integer,intent(in) :: ispec
-  real(kind=CUSTOM_REAL), dimension(NGLLX,NGLLZ,nspec_ATT,N_SLS),intent(inout) :: e1,e11,e13
-
-  ! gradient of displacements (nsub1 denotes discrete time step n-1)
-  real(kind=CUSTOM_REAL), dimension(NGLLX,NGLLZ,nspec),intent(in) :: dux_dxl_n,duz_dzl_n,duz_dxl_n,dux_dzl_n
-  real(kind=CUSTOM_REAL), dimension(NGLLX,NGLLZ,nspec),intent(in) :: dux_dxl_nsub1,duz_dzl_nsub1,duz_dxl_nsub1,dux_dzl_nsub1
-
-  ! local parameters
-  integer :: i,j
+  ! local variables
   integer :: i_sls
 
   ! for attenuation
-  real(kind=CUSTOM_REAL) :: phinu1,phinu2,theta_n_u,theta_nsub1_u
+  real(kind=CUSTOM_REAL) :: a_newmark,phinu1,phinu2,theta_n_u,theta_nsub1_u
   double precision :: tauinvnu1,tauinvnu2
-  double precision :: coef0,coef1,coef2
 
   ! temporary RK4 variable
   real(kind=CUSTOM_REAL) :: weight_rk
 
-  do j = 1,NGLLZ
-    do i = 1,NGLLX
+! update the memory variables using a convolution or using a differential equation
+! (tests made by Ting Yu and also by Zhinan Xie, CNRS Marseille, France, show that it is better to leave it to .true.)
+  logical, parameter :: CONVOLUTION_MEMORY_VARIABLES = .true.
 
-      ! convention to indicate that Q = 9999 in that element i.e. that there is no viscoelasticity in that element
-      if (inv_tau_sigma_nu1(i,j,ispec,1) < 0.) cycle
+  e1_sum = 0.0
+  e11_sum = 0.0
+  e13_sum = 0.0
 
-      theta_n_u = dux_dxl_n(i,j,ispec) + duz_dzl_n(i,j,ispec)
-      theta_nsub1_u = dux_dxl_nsub1(i,j,ispec) + duz_dzl_nsub1(i,j,ispec)
+  ! checks if anything to do
+  if (.not. ATTENUATION_VISCOELASTIC) return
+  if (PML_BOUNDARY_CONDITIONS .and. ispec_is_PML(ispec)) return
+  ! convention to indicate that Q = 9999 in that element i.e. that there is no viscoelasticity at that GLL point
+  if (inv_tau_sigma_nu1(i,j,ispec,1) < 0.) return
 
-      ! loop on all the standard linear solids
-      do i_sls = 1,N_SLS
-        phinu1 = phi_nu1(i,j,ispec,i_sls)
-        tauinvnu1 = inv_tau_sigma_nu1(i,j,ispec,i_sls)
-        phinu2 = phi_nu2(i,j,ispec,i_sls)
-        tauinvnu2 = inv_tau_sigma_nu2(i,j,ispec,i_sls)
+  if (.not. CONVOLUTION_MEMORY_VARIABLES) &
+    call stop_the_code('CONVOLUTION_MEMORY_VARIABLES == .false. is not accurate enough and has been discontinued for now')
 
-        ! update e1, e11, e13 in convolution formation with modified recursive convolution scheme on basis of
-        ! second-order accurate convolution term calculation from equation (21) of
-        ! Shumin Wang, Robert Lee, and Fernando L. Teixeira,
-        ! Anisotropic-Medium PML for Vector FETD With Modified Basis Functions,
-        ! IEEE Transactions on Antennas and Propagation, vol. 54, no. 1, (2006)
-        select case (time_stepping_scheme)
-        case (1)
-          ! Newmark
+  theta_n_u = dux_dxl + duz_dzl
 
+  ! Newmark
+  if (time_stepping_scheme == 1) theta_nsub1_u = dux_dxl_old(i,j,ispec) + duz_dzl_old(i,j,ispec)
+
+  ! loop on all the standard linear solids
+  do i_sls = 1,N_SLS
+
+    ! LDDRK, RK4
+    if (time_stepping_scheme /= 1) then
+      phinu1 = phi_nu1(i,j,ispec,i_sls)
+      tauinvnu1 = inv_tau_sigma_nu1(i,j,ispec,i_sls)
+      phinu2 = phi_nu2(i,j,ispec,i_sls)
+      tauinvnu2 = inv_tau_sigma_nu2(i,j,ispec,i_sls)
+    endif
+
+    ! update e1, e11, e13 in convolution formulation with modified recursive convolution scheme on basis of
+    ! second-order accurate convolution term calculation from equation (21) of
+    ! Shumin Wang, Robert Lee, and Fernando L. Teixeira,
+    ! Anisotropic-medium PML for vector FETD with modified basis functions,
+    ! IEEE Transactions on Antennas and Propagation, vol. 54, no. 1, (2006)
+    select case (time_stepping_scheme)
+    case (1)
+      ! Newmark
 ! update the memory variables using a convolution or using a differential equation
 ! From Zhinan Xie and Dimitri Komatitsch:
 ! For cases in which a value of tau_sigma is small, then its inverse is large,
 ! which may result in a in stiff ordinary differential equation to solve;
-! in such a case, resorting to the convolution formulation may be better (?)
-          if (CONVOLUTION_MEMORY_VARIABLES) then
-            call compute_coef_convolution(tauinvnu1,deltat,coef0,coef1,coef2)
+! in such a case, resorting to the convolution formulation is better.
+!         if (CONVOLUTION_MEMORY_VARIABLES) then
 
-            e1(i,j,ispec,i_sls) = coef0 * e1(i,j,ispec,i_sls) + &
-                                  phinu1 * (coef1 * theta_n_u + coef2 * theta_nsub1_u)
+        ! bulk attenuation
+!! DK DK inlined this for speed            call compute_coef_convolution(tauinvnu1,DT,coef0,coef1,coef2)
+        a_newmark = A_newmark_nu1(i_sls,i,j,ispec)
+        e1(i_sls,i,j,ispec) = a_newmark * a_newmark * e1(i_sls,i,j,ispec) + &
+                              B_newmark_nu1(i_sls,i,j,ispec) * (theta_n_u + a_newmark * theta_nsub1_u)
 
-            call compute_coef_convolution(tauinvnu2,deltat,coef0,coef1,coef2)
+        ! shear attenuation
+!! DK DK inlined this for speed            call compute_coef_convolution(tauinvnu2,DT,coef0,coef1,coef2)
+        a_newmark = A_newmark_nu2(i_sls,i,j,ispec)
+        e11(i_sls,i,j,ispec) = a_newmark * a_newmark * e11(i_sls,i,j,ispec) + &
+                               B_newmark_nu2(i_sls,i,j,ispec) * (dux_dxl-theta_n_u/TWO + &
+                               a_newmark * (dux_dxl_old(i,j,ispec)-theta_nsub1_u/TWO))
 
-            e11(i,j,ispec,i_sls) = coef0 * e11(i,j,ispec,i_sls) + &
-                                   phinu2 * (coef1 * (dux_dxl_n(i,j,ispec)-theta_n_u/TWO) + &
-                                             coef2 * (dux_dxl_nsub1(i,j,ispec)-theta_nsub1_u/TWO))
+        e13(i_sls,i,j,ispec) = a_newmark * a_newmark * e13(i_sls,i,j,ispec) + &
+                               B_newmark_nu2(i_sls,i,j,ispec) * (dux_dzl + duz_dxl + &
+                               a_newmark * (dux_dzl_plus_duz_dxl_old(i,j,ispec)))
 
-            e13(i,j,ispec,i_sls) = coef0 * e13(i,j,ispec,i_sls) + &
-                                   phinu2 * (coef1 * (dux_dzl_n(i,j,ispec) + duz_dxl_n(i,j,ispec)) + &
-                                             coef2 * (dux_dzl_nsub1(i,j,ispec) + duz_dxl_nsub1(i,j,ispec)))
-          else
-            e1(i,j,ispec,i_sls) = e1(i,j,ispec,i_sls) + deltat * &
-                 (- e1(i,j,ispec,i_sls)*tauinvnu1 + phinu1 * theta_n_u)
+!         else
+!           stop 'CONVOLUTION_MEMORY_VARIABLES == .false. is not accurate enough and has been discontinued for now'
+!           e1(i_sls,i,j,ispec) = e1(i_sls,i,j,ispec) + deltat * &
+!                (- e1(i_sls,i,j,ispec)*tauinvnu1 + phinu1 * theta_n_u)
+!
+!           e11(i_sls,i,j,ispec) = e11(i_sls,i,j,ispec) + deltat * &
+!                (- e11(i_sls,i,j,ispec)*tauinvnu2 + phinu2 * (dux_dxl_n(i,j,ispec)-theta_n_u/TWO))
+!
+!           e13(i_sls,i,j,ispec) = e13(i_sls,i,j,ispec) + deltat * &
+!              (- e13(i_sls,i,j,ispec)*tauinvnu2 + phinu2 * (dux_dzl_n(i,j,ispec) + duz_dxl_n(i,j,ispec)))
+!         endif
 
-            e11(i,j,ispec,i_sls) = e11(i,j,ispec,i_sls) + deltat * &
-                 (- e11(i,j,ispec,i_sls)*tauinvnu2 + phinu2 * (dux_dxl_n(i,j,ispec)-theta_n_u/TWO))
+    case (2)
+      ! LDDRK
+      ! update e1, e11, e13 in ADE formation with fourth-order LDDRK scheme
+      e1_LDDRK(i,j,ispec,i_sls) = ALPHA_LDDRK(i_stage) * e1_LDDRK(i,j,ispec,i_sls) + &
+                                  deltat * (theta_n_u * phinu1 - e1(i_sls,i,j,ispec) * tauinvnu1)
+      e1(i_sls,i,j,ispec) = e1(i_sls,i,j,ispec) + BETA_LDDRK(i_stage) * e1_LDDRK(i,j,ispec,i_sls)
 
-            e13(i,j,ispec,i_sls) = e13(i,j,ispec,i_sls) + deltat * &
-               (- e13(i,j,ispec,i_sls)*tauinvnu2 + phinu2 * (dux_dzl_n(i,j,ispec) + duz_dxl_n(i,j,ispec)))
-          endif
+      e11_LDDRK(i,j,ispec,i_sls) = ALPHA_LDDRK(i_stage) * e11_LDDRK(i,j,ispec,i_sls) + &
+                                   deltat * ((dux_dxl-theta_n_u/TWO) * phinu2) - &
+                                   deltat * (e11(i_sls,i,j,ispec) * tauinvnu2)
+      e11(i_sls,i,j,ispec) = e11(i_sls,i,j,ispec)+BETA_LDDRK(i_stage)*e11_LDDRK(i,j,ispec,i_sls)
 
-        case (2)
-          ! LDDRK
-          ! update e1, e11, e13 in ADE formation with fourth-order LDDRK scheme
-          e1_LDDRK(i,j,ispec,i_sls) = ALPHA_LDDRK(i_stage) * e1_LDDRK(i,j,ispec,i_sls) + &
-                                      deltat * (theta_n_u * phinu1 - e1(i,j,ispec,i_sls) * tauinvnu1)
-          e1(i,j,ispec,i_sls) = e1(i,j,ispec,i_sls) + BETA_LDDRK(i_stage) * e1_LDDRK(i,j,ispec,i_sls)
+      e13_LDDRK(i,j,ispec,i_sls) = ALPHA_LDDRK(i_stage) * e13_LDDRK(i,j,ispec,i_sls) + &
+                                   deltat * ((dux_dzl + duz_dxl)*phinu2) - &
+                                   deltat * (e13(i_sls,i,j,ispec) * tauinvnu2)
+      e13(i_sls,i,j,ispec) = e13(i_sls,i,j,ispec)+BETA_LDDRK(i_stage) * e13_LDDRK(i,j,ispec,i_sls)
 
-          e11_LDDRK(i,j,ispec,i_sls) = ALPHA_LDDRK(i_stage) * e11_LDDRK(i,j,ispec,i_sls) + &
-                                       deltat * ((dux_dxl_n(i,j,ispec)-theta_n_u/TWO) * phinu2) - &
-                                       deltat * (e11(i,j,ispec,i_sls) * tauinvnu2)
-          e11(i,j,ispec,i_sls) = e11(i,j,ispec,i_sls)+BETA_LDDRK(i_stage)*e11_LDDRK(i,j,ispec,i_sls)
+    case (3)
+      ! Runge-Kutta
+      ! initial field
+      if (i_stage == 1) e1_initial_rk(i,j,ispec,i_sls) = e1(i_sls,i,j,ispec)
 
-          e13_LDDRK(i,j,ispec,i_sls) = ALPHA_LDDRK(i_stage) * e13_LDDRK(i,j,ispec,i_sls) + &
-                                       deltat * ((dux_dzl_n(i,j,ispec) + duz_dxl_n(i,j,ispec))*phinu2) - &
-                                       deltat * (e13(i,j,ispec,i_sls) * tauinvnu2)
-          e13(i,j,ispec,i_sls) = e13(i,j,ispec,i_sls)+BETA_LDDRK(i_stage) * e13_LDDRK(i,j,ispec,i_sls)
+      ! update e1, e11, e13 in ADE formation with classical fourth-order Runge-Kutta scheme
+      e1_force_RK(i,j,ispec,i_sls,i_stage) = theta_n_u * phinu1 - e1(i_sls,i,j,ispec) * tauinvnu1
 
-        case (3)
-          ! Runge-Kutta
-          ! update e1, e11, e13 in ADE formation with classical fourth-order Runge-Kutta scheme
-          e1_force_RK(i,j,ispec,i_sls,i_stage) = deltat * (theta_n_u * phinu1 - e1(i,j,ispec,i_sls) * tauinvnu1)
+      if (i_stage == 1 .or. i_stage == 2 .or. i_stage == 3) then
+        ! note: this prepare the fields for the next stage, i.e., used at istage+1
+        weight_rk = ALPHA_RK4(i_stage+1) * deltat
+        e1(i_sls,i,j,ispec) = e1_initial_rk(i,j,ispec,i_sls) + weight_rk * e1_force_RK(i,j,ispec,i_sls,i_stage)
+      else if (i_stage == 4) then
+        ! final update
+        e1(i_sls,i,j,ispec) = e1_initial_rk(i,j,ispec,i_sls) + deltat * &
+                              (BETA_RK4(1) * e1_force_RK(i,j,ispec,i_sls,1) + BETA_RK4(2) * e1_force_RK(i,j,ispec,i_sls,2) + &
+                               BETA_RK4(3) * e1_force_RK(i,j,ispec,i_sls,3) + BETA_RK4(4) * e1_force_RK(i,j,ispec,i_sls,4))
+      endif
 
-          if (i_stage==1 .or. i_stage==2 .or. i_stage==3) then
-            if (i_stage == 1) weight_rk = 0.5_CUSTOM_REAL
-            if (i_stage == 2) weight_rk = 0.5_CUSTOM_REAL
-            if (i_stage == 3) weight_rk = 1._CUSTOM_REAL
+      ! initial field
+      if (i_stage == 1) e11_initial_rk(i,j,ispec,i_sls) = e11(i_sls,i,j,ispec)
 
-            if (i_stage==1) e1_initial_rk(i,j,ispec,i_sls) = e1(i,j,ispec,i_sls)
-            e1(i,j,ispec,i_sls) = e1_initial_rk(i,j,ispec,i_sls) + weight_rk * e1_force_RK(i,j,ispec,i_sls,i_stage)
-          else if (i_stage==4) then
-            e1(i,j,ispec,i_sls) = e1_initial_rk(i,j,ispec,i_sls) + 1._CUSTOM_REAL / 6._CUSTOM_REAL * &
-                                  (e1_force_RK(i,j,ispec,i_sls,1) + 2._CUSTOM_REAL * e1_force_RK(i,j,ispec,i_sls,2) + &
-                                   2._CUSTOM_REAL * e1_force_RK(i,j,ispec,i_sls,3) + e1_force_RK(i,j,ispec,i_sls,4))
-          endif
+      ! intermediate fields
+      e11_force_RK(i,j,ispec,i_sls,i_stage) = (dux_dxl-theta_n_u/TWO) * phinu2 - e11(i_sls,i,j,ispec) * tauinvnu2
 
-          e11_force_RK(i,j,ispec,i_sls,i_stage) = deltat * ((dux_dxl_n(i,j,ispec)-theta_n_u/TWO) * phinu2 - &
-                                                             e11(i,j,ispec,i_sls) * tauinvnu2)
+      if (i_stage == 1 .or. i_stage == 2 .or. i_stage == 3) then
+        ! note: this prepare the fields for the next stage, i.e., used at istage+1
+        weight_rk = ALPHA_RK4(i_stage+1) * deltat
+        e11(i_sls,i,j,ispec) = e11_initial_rk(i,j,ispec,i_sls) + weight_rk * e11_force_RK(i,j,ispec,i_sls,i_stage)
+      else if (i_stage == 4) then
+        ! final update
+        e11(i_sls,i,j,ispec) = e11_initial_rk(i,j,ispec,i_sls) + deltat * &
+                               (BETA_RK4(1) * e11_force_RK(i,j,ispec,i_sls,1) + BETA_RK4(2) * e11_force_RK(i,j,ispec,i_sls,2) + &
+                                BETA_RK4(3) * e11_force_RK(i,j,ispec,i_sls,3) + BETA_RK4(4) * e11_force_RK(i,j,ispec,i_sls,4))
+      endif
 
-          if (i_stage==1 .or. i_stage==2 .or. i_stage==3) then
-            if (i_stage == 1) weight_rk = 0.5_CUSTOM_REAL
-            if (i_stage == 2) weight_rk = 0.5_CUSTOM_REAL
-            if (i_stage == 3) weight_rk = 1._CUSTOM_REAL
+      ! initial field
+      if (i_stage == 1) e13_initial_rk(i,j,ispec,i_sls) = e13(i_sls,i,j,ispec)
 
-            if (i_stage==1) e11_initial_rk(i,j,ispec,i_sls) = e11(i,j,ispec,i_sls)
-            e11(i,j,ispec,i_sls) = e11_initial_rk(i,j,ispec,i_sls) + weight_rk * e11_force_RK(i,j,ispec,i_sls,i_stage)
-          else if (i_stage==4) then
-            e11(i,j,ispec,i_sls) = e11_initial_rk(i,j,ispec,i_sls) + 1._CUSTOM_REAL / 6._CUSTOM_REAL * &
-                                   (e11_force_RK(i,j,ispec,i_sls,1) + 2._CUSTOM_REAL * e11_force_RK(i,j,ispec,i_sls,2) + &
-                                    2._CUSTOM_REAL * e11_force_RK(i,j,ispec,i_sls,3) + e11_force_RK(i,j,ispec,i_sls,4))
-          endif
+      ! intermediate fields
+      e13_force_RK(i,j,ispec,i_sls,i_stage) = (dux_dzl + duz_dxl)*phinu2 - e13(i_sls,i,j,ispec) * tauinvnu2
 
-          e13_force_RK(i,j,ispec,i_sls,i_stage) = deltat * ((dux_dzl_n(i,j,ispec) + duz_dxl_n(i,j,ispec))*phinu2 - &
-                                                             e13(i,j,ispec,i_sls) * tauinvnu2)
-          if (i_stage==1 .or. i_stage==2 .or. i_stage==3) then
-            if (i_stage == 1) weight_rk = 0.5_CUSTOM_REAL
-            if (i_stage == 2) weight_rk = 0.5_CUSTOM_REAL
-            if (i_stage == 3) weight_rk = 1._CUSTOM_REAL
+      if (i_stage == 1 .or. i_stage == 2 .or. i_stage == 3) then
+        ! note: this prepare the fields for the next stage, i.e., used at istage+1
+        weight_rk = ALPHA_RK4(i_stage+1) * deltat
+        e13(i_sls,i,j,ispec) = e13_initial_rk(i,j,ispec,i_sls) + weight_rk * e13_force_RK(i,j,ispec,i_sls,i_stage)
+      else if (i_stage == 4) then
+        ! final update
+        e13(i_sls,i,j,ispec) = e13_initial_rk(i,j,ispec,i_sls) + deltat * &
+                               (BETA_RK4(1) * e13_force_RK(i,j,ispec,i_sls,1) + BETA_RK4(2) * e13_force_RK(i,j,ispec,i_sls,2) + &
+                                BETA_RK4(3) * e13_force_RK(i,j,ispec,i_sls,3) + BETA_RK4(4) * e13_force_RK(i,j,ispec,i_sls,4))
+      endif
 
-            if (i_stage==1) e13_initial_rk(i,j,ispec,i_sls) = e13(i,j,ispec,i_sls)
-            e13(i,j,ispec,i_sls) = e13_initial_rk(i,j,ispec,i_sls) + weight_rk * e13_force_RK(i,j,ispec,i_sls,i_stage)
-          else if (i_stage==4) then
-            e13(i,j,ispec,i_sls) = e13_initial_rk(i,j,ispec,i_sls) + 1._CUSTOM_REAL / 6._CUSTOM_REAL * &
-                                   (e13_force_RK(i,j,ispec,i_sls,1) + 2._CUSTOM_REAL * e13_force_RK(i,j,ispec,i_sls,2) + &
-                                    2._CUSTOM_REAL * e13_force_RK(i,j,ispec,i_sls,3) + e13_force_RK(i,j,ispec,i_sls,4))
-          endif
+    case default
+      call stop_the_code('Time stepping scheme not implemented yet in viscoelastic attenuation update')
+    end select
 
-        case default
-          stop 'Time stepping scheme not implemented yet in viscoelastic attenuation update'
-        end select
+  enddo ! i_sls
 
-      enddo ! i_sls
+  e1_sum = sum(e1(:,i,j,ispec))
+  e11_sum = sum(e11(:,i,j,ispec))
+  e13_sum = sum(e13(:,i,j,ispec))
 
-    enddo
-  enddo
+  ! Newmark
+  if (time_stepping_scheme == 1) then
+    !Update of grad(Displ)
+    dux_dxl_old(i,j,ispec) = dux_dxl
+    duz_dzl_old(i,j,ispec) = duz_dzl
+    dux_dzl_plus_duz_dxl_old(i,j,ispec) = dux_dzl + duz_dxl
+  endif
 
-  end subroutine compute_attenuation_viscoelastic_update
+  end subroutine compute_attenuation_viscoelastic
+

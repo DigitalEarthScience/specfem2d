@@ -15,7 +15,7 @@
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
-# the Free Software Foundation; either version 2 of the License, or
+# the Free Software Foundation; either version 3 of the License, or
 # (at your option) any later version.
 #
 # This program is distributed in the hope that it will be useful,
@@ -94,7 +94,13 @@ xsum_kernels_SHARED_OBJECTS = \
 	$O/specfem2D_par.spec_module.o \
 	$O/shared_par.shared_module.o \
 	$O/exit_mpi.shared.o \
-	$O/parallel.shared.o \
+	$O/parallel.sharedmpi.o \
+	$O/read_interfaces_file.shared.o \
+	$O/read_parameter_file.shared.o \
+	$O/read_value_parameters.shared.o \
+	$O/read_material_table.shared.o \
+	$O/read_regions.shared.o \
+	$O/param_reader.cc.o \
 	$(EMPTY_MACRO)
 
 ${E}/xsum_kernels: $(xsum_kernels_OBJECTS) $(xsum_kernels_SHARED_OBJECTS) $(COND_MPI_OBJECTS)

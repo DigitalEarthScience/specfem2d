@@ -12,9 +12,10 @@ AC_PREREQ(2.61)
 AC_INIT([Specfem 2D], [7.0.0], [see the wiki], [Specfem2D])
 AC_CONFIG_SRCDIR([README.md])
 
-AC_CONFIG_HEADER([setup/config.h])
+AC_CONFIG_HEADERS([setup/config.h])
 
 AC_CONFIG_MACRO_DIR([m4])
+m4_include(m4/cit_backports.m4)
 
 ############################################################
 
@@ -28,11 +29,11 @@ AC_CANONICAL_HOST
 ###
 
 AC_ARG_ENABLE([double-precision],
-    [AC_HELP_STRING([--enable-double-precision],
+    [AS_HELP_STRING([--enable-double-precision],
         [solver in double precision @<:@default=no@:>@])],
     [want_double_precision="$enableval"],
     [want_double_precision=no])
-if test "$want_double_precision" = no; then
+if test x"$want_double_precision" = xno; then
     CUSTOM_REAL=SIZE_REAL
     CUSTOM_MPI_TYPE=MPI_REAL
 else
@@ -47,7 +48,7 @@ AC_SUBST([CUSTOM_MPI_TYPE])
 ###
 
 AC_ARG_ENABLE([debug],
-    [AC_HELP_STRING([--enable-debug],
+    [AS_HELP_STRING([--enable-debug],
         [build with debugging options enabled @<:@default=no@:>@])],
     [want_debug="$enableval"],
     [want_debug=no])
@@ -56,33 +57,11 @@ export COND_DEBUG_FALSE
 export COND_DEBUG_TRUE
 
 ###
-### FORCE_VECTORIZATION
-###
-
-AC_ARG_ENABLE([vectorization],
-    [AC_HELP_STRING([--enable-vectorization],
-        [build FORCE_VECTORIZATION enabled version @<:@default=auto@:>@])],
-    [want_vec="$enableval"],
-    [want_vec=no])
-if test x"$want_vec" == xauto; then
-    if test x"$want_debug" != xno; then
-        want_vec=no
-    else
-        want_vec=yes
-    fi
-else
-    if test x"$want_vec" != xno && test x"$want_debug" != xno; then
-        AC_MSG_ERROR([--enable-debug and --enable-vectorization cannot be specified simultaneously.])
-    fi
-fi
-AM_CONDITIONAL([COND_VECTORIZATION], [test x"$want_vec" != xno])
-
-###
 ### MPI
 ###
 
 AC_ARG_WITH([mpi],
-    [AC_HELP_STRING([--with-mpi],
+    [AS_HELP_STRING([--with-mpi],
         [build parallel version @<:@default=no@:>@])],
     [want_mpi="$withval"],
     [want_mpi=no])
@@ -97,12 +76,32 @@ AC_ARG_WITH([cuda],
         [build CUDA GPU enabled version @<:@default=no@:>@])],
     [want_cuda="$withval"],
     [want_cuda=no])
-AM_CONDITIONAL([COND_CUDA], [test "$want_cuda" != no])
-AM_CONDITIONAL([COND_CUDA5], [test "$want_cuda" = cuda5])
-AM_CONDITIONAL([COND_CUDA6], [test "$want_cuda" = cuda6])
-AM_CONDITIONAL([COND_CUDA7], [test "$want_cuda" = cuda7])
-# cuda linking for cuda 5x and 6x
-AM_CONDITIONAL([COND_CUDA_PLUS], [test "$want_cuda" = cuda5 -o "$want_cuda" = cuda6 -o "$want_cuda" = cuda7])
+
+# sets default: --with-cuda
+if test x"$want_cuda" = xyes; then
+    want_cuda=cuda4
+fi
+AM_CONDITIONAL([COND_CUDA], [test x"$want_cuda" != xno])
+AM_CONDITIONAL([COND_CUDA4], [test x"$want_cuda" = xcuda4])
+AM_CONDITIONAL([COND_CUDA5], [test x"$want_cuda" = xcuda5])
+AM_CONDITIONAL([COND_CUDA6], [test x"$want_cuda" = xcuda6])
+AM_CONDITIONAL([COND_CUDA7], [test x"$want_cuda" = xcuda7])
+AM_CONDITIONAL([COND_CUDA8], [test x"$want_cuda" = xcuda8])
+AM_CONDITIONAL([COND_CUDA9], [test x"$want_cuda" = xcuda9])
+AM_CONDITIONAL([COND_CUDA10], [test x"$want_cuda" = xcuda10])
+AM_CONDITIONAL([COND_CUDA11], [test x"$want_cuda" = xcuda11])
+
+# cuda linking for cuda 5x and 6x and 7x and 8x and ..
+AM_CONDITIONAL([COND_CUDA_PLUS],
+  [test "$want_cuda" = cuda4 \
+     -o "$want_cuda" = cuda5 \
+     -o "$want_cuda" = cuda6 \
+     -o "$want_cuda" = cuda7 \
+     -o "$want_cuda" = cuda8 \
+     -o "$want_cuda" = cuda9 \
+     -o "$want_cuda" = cuda10 \
+     -o "$want_cuda" = cuda11 \]
+)
 
 ############################################################
 
@@ -128,6 +127,7 @@ FFLAGS="$FCFLAGS"
 
 AC_PROVIDE([AC_PROG_F77])
 AC_SUBST([FCENV])
+AC_SUBST(srcdir)
 
 flags_guess="$SHELL $srcdir/flags.guess"
 AC_MSG_NOTICE([running $flags_guess])
@@ -252,7 +252,7 @@ else
   # uses bundled scotch: current version pointed to by symbolic link scotch/
   USE_BUNDLED_SCOTCH=1
 
-  SCOTCH_DIR="$srcdir/src/meshfem2D/scotch"
+  SCOTCH_DIR="$srcdir/external_libs/scotch"
   SCOTCH_LIBDIR="${SCOTCH_DIR}/lib"
   SCOTCH_INCLUDEDIR="${SCOTCH_DIR}/include"
  else
@@ -295,17 +295,17 @@ AC_ARG_VAR(LOCAL_PATH_IS_ALSO_GLOBAL, [files on a local path on each node are al
 AS_IF([test x"$MPIFC" = x],[
     MPIFC=mpif90
 ])
+
 AS_IF([test x"$MPICC" = x],[
     MPICC=mpicc
 ])
+
 AS_IF([test x"$LOCAL_PATH_IS_ALSO_GLOBAL" = x],[
     LOCAL_PATH_IS_ALSO_GLOBAL=true
 ])
 
 # Checks for typedefs, structures, and compiler characteristics.
-
 # check fortran modules flag
-
 AS_BOX([module extensions])
 
 AC_FC_MODULE_EXTENSION
@@ -328,11 +328,12 @@ AC_SUBST([FC_MODDIR])
 
 AS_IF([test "$want_mpi" = yes], [
     AS_BOX([MPI])
+    # checks MPI include directory
     CIT_MPI_INCDIR([$MPIFC])
 ])
 
 ###
-### CUDA
+### GPU
 ###
 
 AS_IF([test x"$want_cuda" != xno], [
@@ -340,16 +341,21 @@ AS_IF([test x"$want_cuda" != xno], [
     CIT_CUDA_CONFIG
 ])
 
-###
-### FORCE_VECTORIZATION
-###
-
-AS_IF([test x"$want_vec" != xno],[
-  AS_BOX([FORCE VECTORIZATION])
-  AC_MSG_NOTICE([FORCE_VECTORIZATION is enabled])
-
-  FLAGS_CHECK="${FLAGS_CHECK} ${FC_DEFINE}FORCE_VECTORIZATION"
-  CPPFLAGS="${CPPFLAGS} -DFORCE_VECTORIZATION"
+##
+## Git version info
+##
+AS_BOX([git version info])
+CIG_PKG_GIT(SPECFEM2D)
+AC_DEFINE_UNQUOTED([SPECFEM2D_VERSION], ["$PACKAGE_VERSION"], [Define SPECFEM2D version])
+#AC_DEFINE_UNQUOTED([SPECFEM2D_DOI], ["10.5281/zenodo.xxxxx"], [Define SPECFEM2D doi])
+AS_IF([test -d $srcdir/.git], [
+    GIT_VERSION_DEPS="$srcdir/.git/logs/HEAD"
+    AC_MSG_NOTICE([building from git repository])
+    AC_SUBST(GIT_VERSION_DEPS)
+], [
+    dnl Only substitute if not in a git repository.
+    AC_MSG_NOTICE([not a git repository])
+    AC_CONFIG_FILES([setup/version.fh])
 ])
 
 ############################################################
@@ -365,11 +371,17 @@ AC_CONFIG_FILES([
   setup/config.fh
 ])
 
+# Scotch makefile
 if test "$USE_BUNDLED_SCOTCH" = 1; then
   AC_CONFIG_FILES([
 	  ${SCOTCH_DIR}/src/Makefile.inc
   ])
 fi
+
+AC_CONFIG_FILES([
+    DATA/Par_file:DATA/Par_file
+    DATA/SOURCE:DATA/SOURCE
+])
 
 AC_CONFIG_COMMANDS([bin], [AS_MKDIR_P(bin)])
 AC_CONFIG_COMMANDS([obj], [AS_MKDIR_P(obj)])

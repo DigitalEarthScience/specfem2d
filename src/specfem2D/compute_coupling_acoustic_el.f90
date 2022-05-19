@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -33,19 +33,23 @@
 
 ! for acoustic solver
 
-  subroutine compute_coupling_acoustic_el(displ_elastic,displ_elastic_old,potential_dot_dot_acoustic)
+  subroutine compute_coupling_acoustic_el()
 
-  use constants,only: CUSTOM_REAL,NGLLX,NGLLZ,NGLJ,NDIM, &
-    CPML_X_ONLY,CPML_Z_ONLY,IRIGHT,ILEFT,IBOTTOM,ITOP,ONE,ALPHA_LDDRK,BETA_LDDRK
+  use constants, only: CUSTOM_REAL,NGLLX,NGLLZ,NGLJ,NDIM, &
+    CPML_X_ONLY,CPML_Z_ONLY,IRIGHT,ILEFT,IBOTTOM,ITOP,ONE,ALPHA_LDDRK,BETA_LDDRK,USE_A_STRONG_FORMULATION_FOR_E1
 
-  use specfem_par, only: num_fluid_solid_edges,ibool,wxgll,wzgll,xix,xiz,&
-                         gammax,gammaz,jacobian,ivalue,jvalue,ivalue_inverse,jvalue_inverse,&
+  use specfem_par, only: num_fluid_solid_edges,ibool,wxgll,wzgll,xix,xiz, &
+                         gammax,gammaz,jacobian,ivalue,jvalue,ivalue_inverse,jvalue_inverse, &
                          fluid_solid_acoustic_ispec,fluid_solid_acoustic_iedge, &
-                         fluid_solid_elastic_ispec,fluid_solid_elastic_iedge,&
-                         AXISYM,coord,is_on_the_axis,xiglj,wxglj,&
-                         rmemory_fsb_displ_elastic,timeval,deltat,&
+                         fluid_solid_elastic_ispec,fluid_solid_elastic_iedge, &
+                         AXISYM,coord,is_on_the_axis,xiglj,wxglj, &
+                         rmemory_fsb_displ_elastic,DT,deltat, &
                          rmemory_fsb_displ_elastic_LDDRK,i_stage,time_stepping_scheme, &
-                         nglob_acoustic,nglob_elastic
+                         iglob_is_forced, &
+                         ATTENUATION_VISCOACOUSTIC
+
+  use specfem_par, only: displ_elastic,accel_elastic,potential_dot_dot_acoustic, &
+                         displ_elastic_old,dot_e1,SIMULATION_TYPE
 
   ! PML arrays
   use specfem_par, only: PML_BOUNDARY_CONDITIONS,ispec_is_PML,nspec_PML,spec_to_PML,region_CPML, &
@@ -53,16 +57,13 @@
 
   implicit none
 
-  real(kind=CUSTOM_REAL),dimension(NDIM,nglob_elastic) :: displ_elastic,displ_elastic_old
-  real(kind=CUSTOM_REAL),dimension(nglob_acoustic) :: potential_dot_dot_acoustic
-
   !local variable
   real(kind=CUSTOM_REAL), dimension(NGLJ,NGLLZ) :: r_xiplus1
   integer :: inum,ispec_acoustic,ispec_elastic,iedge_acoustic,iedge_elastic,ipoin1D,i,j,iglob
-  real(kind=CUSTOM_REAL) :: displ_x,displ_z,displ_n,&
+  real(kind=CUSTOM_REAL) :: displ_x,displ_z,displ_n, &
                             xxi,zxi,xgamma,zgamma,jacobian1D,nx,nz,weight
   ! PML
-  integer :: ispec_PML,CPML_region_local,singularity_type_xz
+  integer :: ispec_PML,CPML_region_local
   double precision :: kappa_x,kappa_z,d_x,d_z,alpha_x,alpha_z,beta_x,beta_z, &
                       A8,A9,A10,bb_xz_1,bb_xz_2,coef0_xz_1,coef1_xz_1,coef2_xz_1,coef0_xz_2,coef1_xz_2,coef2_xz_2
 
@@ -85,13 +86,32 @@
       j = jvalue_inverse(ipoin1D,iedge_elastic)
       iglob = ibool(i,j,ispec_elastic)
 
-      displ_x = displ_elastic(1,iglob)
-      displ_z = displ_elastic(2,iglob)
+      if (SIMULATION_TYPE /= 3) then
+        ! forward and pure adjoint simulations
+        ! coupling term:
+        !   1/rho grad(chi) * n = n * u
+        ! uses normal component of displacement
+        displ_x = displ_elastic(1,iglob)
+        displ_z = displ_elastic(2,iglob)
+      else
+        ! coupling for kernel adjoint wavefields
+        !
+        ! note: handles adjoint runs coupling between adjoint potential and adjoint elastic wavefield
+        !       adjoint definition: \partial_t^2 \bfs^\dagger = - \frac{1}{\rho} \bfnabla \phi^\dagger
+        !       (see Luo et al. 2013, eq. A-22)
+        !
+        ! coupling term:
+        !   1/rho grad(chi^adj) * n = - n * \partial_t^2 u^adj
+        !
+        ! coupling with adjoint wavefields uses normal component of negative acceleration
+        displ_x = - accel_elastic(1,iglob)       ! accel_elastic_adj_coupling
+        displ_z = - accel_elastic(2,iglob)
+      endif
 
       ! PML elements
       ! overwrites displ_x and displ_z
       if (PML_BOUNDARY_CONDITIONS) then
-        if (ispec_is_PML(ispec_elastic) .and. nspec_PML > 0) then
+        if (nspec_PML > 0 .and. ispec_is_PML(ispec_elastic)) then
           ispec_PML = spec_to_PML(ispec_elastic)
           CPML_region_local = region_CPML(ispec_elastic)
           kappa_x = K_x_store(i,j,ispec_PML)
@@ -104,26 +124,28 @@
           beta_z = alpha_z + d_z / kappa_z
 
           if (CPML_region_local == CPML_X_ONLY) then
-            call lik_parameter_computation(timeval,deltat,kappa_x,beta_x,alpha_x,kappa_z,beta_z,alpha_z,&
-                                           CPML_region_local,13,A8,A9,A10,singularity_type_xz,bb_xz_1,bb_xz_2,&
+            !ZN needed to be change in case of viscoelastic medium
+            call lik_parameter_computation(DT,kappa_x,beta_x,alpha_x,kappa_z,beta_z,alpha_z, &
+                                           CPML_region_local,13,A8,A9,A10,bb_xz_1,bb_xz_2, &
                                            coef0_xz_1,coef1_xz_1,coef2_xz_1,coef0_xz_2,coef1_xz_2,coef2_xz_2)
           else if (CPML_region_local == CPML_Z_ONLY) then
-            call lik_parameter_computation(timeval,deltat,kappa_z,beta_z,alpha_z,kappa_x,beta_x,alpha_x,&
-                                           CPML_region_local,31,A8,A9,A10,singularity_type_xz,bb_xz_1,bb_xz_2,&
+            call lik_parameter_computation(DT,kappa_z,beta_z,alpha_z,kappa_x,beta_x,alpha_x, &
+                                           CPML_region_local,31,A8,A9,A10,bb_xz_1,bb_xz_2, &
                                            coef0_xz_1,coef1_xz_1,coef2_xz_1,coef0_xz_2,coef1_xz_2,coef2_xz_2)
 
           else
-            stop 'PML do not support a fluid-solid boundary in corner PML region'
+            call stop_the_code('PML do not support a fluid-solid boundary in corner PML region')
           endif
 
-          if (time_stepping_scheme == 1) then
+          select case(time_stepping_scheme)
+          case (1)
             ! Newmark
             rmemory_fsb_displ_elastic(1,1,i,j,inum) = coef0_xz_1 * rmemory_fsb_displ_elastic(1,1,i,j,inum) + &
                    coef1_xz_1 * displ_elastic(1,iglob) + coef2_xz_1 * displ_elastic_old(1,iglob)
             rmemory_fsb_displ_elastic(1,2,i,j,inum) = coef0_xz_1 * rmemory_fsb_displ_elastic(1,2,i,j,inum) + &
                    coef1_xz_1 * displ_elastic(2,iglob) + coef2_xz_1 * displ_elastic_old(2,iglob)
 
-          else if (time_stepping_scheme == 2) then
+          case (2)
             ! LDDRK
             rmemory_fsb_displ_elastic_LDDRK(1,1,i,j,inum) = &
                    ALPHA_LDDRK(i_stage) * rmemory_fsb_displ_elastic_LDDRK(1,1,i,j,inum) + &
@@ -136,7 +158,10 @@
                   deltat * ( - bb_xz_1 * rmemory_fsb_displ_elastic(1,2,i,j,inum) + displ_elastic(2,iglob) )
             rmemory_fsb_displ_elastic(1,2,i,j,inum) = rmemory_fsb_displ_elastic(1,2,i,j,inum) + &
                    BETA_LDDRK(i_stage) * rmemory_fsb_displ_elastic_LDDRK(1,2,i,j,inum)
-          endif
+
+          case default
+            call stop_the_code('PML for RK4 not implemented yet in compute_coupling_acoustic_el()')
+          end select
 
           displ_x = A8 * displ_elastic(1,iglob) + A9 * rmemory_fsb_displ_elastic(1,1,i,j,inum)
           displ_z = A8 * displ_elastic(2,iglob) + A9 * rmemory_fsb_displ_elastic(1,2,i,j,inum)
@@ -199,7 +224,7 @@
           weight = jacobian1D * wxgll(i)
         endif
 
-      else if (iedge_acoustic ==ILEFT) then
+      else if (iedge_acoustic == ILEFT) then
 
         xgamma = - xiz(i,j,ispec_acoustic) * jacobian(i,j,ispec_acoustic)
         zgamma = + xix(i,j,ispec_acoustic) * jacobian(i,j,ispec_acoustic)
@@ -208,7 +233,7 @@
         nz = + xgamma / jacobian1D
         if (AXISYM) then
           if (is_on_the_axis(ispec_acoustic)) then
-            stop 'error: rotated element detected on the symmetry axis, this should not happen'
+            call stop_the_code('error: rotated element detected on the symmetry axis, this should not happen')
           else
             weight = jacobian1D * wzgll(j) * coord(1,ibool(i,j,ispec_acoustic))
           endif
@@ -216,7 +241,7 @@
           weight = jacobian1D * wzgll(j)
         endif
 
-      else if (iedge_acoustic ==IRIGHT) then
+      else if (iedge_acoustic == IRIGHT) then
 
         xgamma = - xiz(i,j,ispec_acoustic) * jacobian(i,j,ispec_acoustic)
         zgamma = + xix(i,j,ispec_acoustic) * jacobian(i,j,ispec_acoustic)
@@ -225,7 +250,7 @@
         nz = - xgamma / jacobian1D
         if (AXISYM) then
           if (is_on_the_axis(ispec_acoustic)) then
-            stop 'error: rotated element detected on the symmetry axis, this should not happen'
+            call stop_the_code('error: rotated element detected on the symmetry axis, this should not happen')
           else
             weight = jacobian1D * wzgll(j) * coord(1,ibool(i,j,ispec_acoustic))
           endif
@@ -237,7 +262,16 @@
 
       ! compute dot product
       displ_n = displ_x*nx + displ_z*nz
-      potential_dot_dot_acoustic(iglob) = potential_dot_dot_acoustic(iglob) + weight*displ_n
+
+!! DK DK QUENTIN visco begin ici comme tu disais il faudrait coupler la composante tangentielle
+!! DK DK QUENTIN en plus de la composante normale je suppose
+      if (.not. iglob_is_forced(iglob)) then
+        potential_dot_dot_acoustic(iglob) = potential_dot_dot_acoustic(iglob) + weight*displ_n
+
+        if (ATTENUATION_VISCOACOUSTIC .and. .not. USE_A_STRONG_FORMULATION_FOR_E1 ) &
+          dot_e1(iglob,:) = dot_e1(iglob,:) + weight*displ_n
+      endif
+!! DK DK QUENTIN visco end
 
     enddo
   enddo
@@ -247,27 +281,25 @@
 !========================================================================
 ! for acoustic solver: backward simulation in adjoint inversion
 
-  subroutine compute_coupling_acoustic_el_backward(b_displ_elastic,b_potential_dot_dot_acoustic)
+  subroutine compute_coupling_acoustic_el_backward()
 
-  use constants,only: CUSTOM_REAL,NGLLX,NGLLZ,NGLJ,NDIM, &
+  use constants, only: CUSTOM_REAL,NGLLX,NGLLZ,NGLJ,NDIM, &
     CPML_X_ONLY,CPML_Z_ONLY,IRIGHT,ILEFT,IBOTTOM,ITOP,ONE
 
-  use specfem_par, only: num_fluid_solid_edges,ibool,wxgll,wzgll,xix,xiz,&
-                         gammax,gammaz,jacobian,ivalue,jvalue,ivalue_inverse,jvalue_inverse,&
+  use specfem_par, only: num_fluid_solid_edges,ibool,wxgll,wzgll,xix,xiz, &
+                         gammax,gammaz,jacobian,ivalue,jvalue,ivalue_inverse,jvalue_inverse, &
                          fluid_solid_acoustic_ispec,fluid_solid_acoustic_iedge, &
-                         fluid_solid_elastic_ispec,fluid_solid_elastic_iedge,&
-                         AXISYM,coord,is_on_the_axis,xiglj,wxglj,&
-                         nglob_acoustic,nglob_elastic
+                         fluid_solid_elastic_ispec,fluid_solid_elastic_iedge, &
+                         AXISYM,coord,is_on_the_axis,xiglj,wxglj
+
+  use specfem_par, only: b_displ_elastic,b_potential_dot_dot_acoustic
 
   implicit none
-
-  real(kind=CUSTOM_REAL),dimension(NDIM,nglob_elastic) :: b_displ_elastic
-  real(kind=CUSTOM_REAL),dimension(nglob_acoustic) :: b_potential_dot_dot_acoustic
 
   !local variable
   real(kind=CUSTOM_REAL), dimension(NGLJ,NGLLZ) :: r_xiplus1
   integer :: inum,ispec_acoustic,ispec_elastic,iedge_acoustic,iedge_elastic,ipoin1D,i,j,iglob
-  real(kind=CUSTOM_REAL) :: displ_x,displ_z,displ_n,&
+  real(kind=CUSTOM_REAL) :: displ_x,displ_z,displ_n, &
                             xxi,zxi,xgamma,zgamma,jacobian1D,nx,nz,weight
 
   ! loop on all the coupling edges
@@ -289,7 +321,8 @@
       j = jvalue_inverse(ipoin1D,iedge_elastic)
       iglob = ibool(i,j,ispec_elastic)
 
-
+      ! coupling term: 1/rho grad(chi) * n = n * u
+      ! for backward wavefields
       displ_x = b_displ_elastic(1,iglob)
       displ_z = b_displ_elastic(2,iglob)
 
@@ -343,7 +376,7 @@
         else
           weight = jacobian1D * wxgll(i)
         endif
-      else if (iedge_acoustic ==ILEFT) then
+      else if (iedge_acoustic == ILEFT) then
         xgamma = - xiz(i,j,ispec_acoustic) * jacobian(i,j,ispec_acoustic)
         zgamma = + xix(i,j,ispec_acoustic) * jacobian(i,j,ispec_acoustic)
         jacobian1D = sqrt(xgamma**2 + zgamma**2)
@@ -351,14 +384,14 @@
         nz = + xgamma / jacobian1D
         if (AXISYM) then
           if (is_on_the_axis(ispec_acoustic)) then
-            stop 'error: rotated element detected on the symmetry axis, this should not happen'
+            call stop_the_code('error: rotated element detected on the symmetry axis, this should not happen')
           else
             weight = jacobian1D * wzgll(j) * coord(1,ibool(i,j,ispec_acoustic))
           endif
         else
           weight = jacobian1D * wzgll(j)
         endif
-      else if (iedge_acoustic ==IRIGHT) then
+      else if (iedge_acoustic == IRIGHT) then
         xgamma = - xiz(i,j,ispec_acoustic) * jacobian(i,j,ispec_acoustic)
         zgamma = + xix(i,j,ispec_acoustic) * jacobian(i,j,ispec_acoustic)
         jacobian1D = sqrt(xgamma**2 + zgamma**2)
@@ -366,7 +399,7 @@
         nz = - xgamma / jacobian1D
         if (AXISYM) then
           if (is_on_the_axis(ispec_acoustic)) then
-            stop 'error: rotated element detected on the symmetry axis, this should not happen'
+            call stop_the_code('error: rotated element detected on the symmetry axis, this should not happen')
           else
             weight = jacobian1D * wzgll(j) * coord(1,ibool(i,j,ispec_acoustic))
           endif

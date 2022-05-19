@@ -6,7 +6,7 @@
 #### Then you can run cubit2specfem2d.py
 #### Author alexis dot bottero at gmail dot com
 ###########################################################################
-
+from __future__ import print_function
 import cubit
 
 lx=50000 #5000
@@ -17,7 +17,7 @@ nPml=3 # PMLs Thickness (number of elements in pmls)
 
 elementSize = 1000 # Mean element size
 
-#cubit.cmd('cd "/home1/bottero/Desktop/mesh2d"') # Change Cubit working directory 
+#cubit.cmd('cd "/home1/bottero/Desktop/mesh2d"') # Change Cubit working directory
 cubit.cmd('reset')
 
 ### Create the rectangle :
@@ -47,8 +47,8 @@ cubit.cmd('block 101 (face all except face in block 1 100)')
 # xz pmls :
 cubit.cmd('set duplicate block elements on')
 cubit.cmd('block 200 face in block 101 with z_coord > 0')
-cubit.cmd('block 201 face in block 101 with z_coord < '+str(-lz)) 
-cubit.cmd('block 102 face in block 200 201') 
+cubit.cmd('block 201 face in block 101 with z_coord < '+str(-lz))
+cubit.cmd('block 102 face in block 200 201')
 #cubit.cmd('block 102 group (face in block 101 with z_coord > 0) and (face in block 101 with z_coord < '+str(-lz)) # Does not work??!!
 
 ### Create geometry from free mesh (necessary to merge) :

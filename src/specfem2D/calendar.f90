@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -31,7 +31,6 @@
 !
 !========================================================================
 
-
   integer function julian_day(yr,mo,da)
 
   implicit none
@@ -43,7 +42,7 @@
   data mon /0,31,59,90,120,151,181,212,243,273,304,334/
 
   julian_day = da + mon(mo)
-  if (mo>2) julian_day = julian_day + lpyr(yr)
+  if (mo > 2) julian_day = julian_day + lpyr(yr)
 
   end function julian_day
 
@@ -124,7 +123,7 @@
 ! but WITHOUT ANY WARRANTY; without even the implied warranty of
 ! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 ! If you find any errors, please notify:
-! Jon Ahlquist <ahlquist@met.fsu.edu>
+! Jon Ahlquist
 ! Dept of Meteorology
 ! Florida State University
 ! Tallahassee, FL 32306-4520
@@ -173,7 +172,7 @@
 
 !----------
 !
-! Subroutine calndr() performs calendar calculations using either
+! subroutine calndr() performs calendar calculations using either
 ! the standard Gregorian calendar or the old Julian calendar.
 ! This subroutine extends the definitions of these calendar systems
 ! to any arbitrary year.  The algorithms in this subroutine
@@ -187,7 +186,7 @@
 !
 !----------
 !
-! INPUT/OUTPUT ARGUMENTS FOR SUBROUTINE CALNDR()
+! input/output arguments for subroutine CALNDR()
 !
 ! "ioptn" is the desired calendar conversion option explained below.
 ! Positive option values use the standard modern Gregorian calendar.
@@ -203,7 +202,7 @@
 ! For BC years, iyear should be negative, so 45 BC would be iyear=-45.
 ! By convention, there is no year 0 under the BC/AD year numbering
 ! scheme.  That is, years proceed as 2 BC, 1 BC, 1 AD, 2 AD, etc.,
-! without including 0.  Subroutine calndr() will print an error message
+! without including 0. The subroutine calndr() will print an error message
 ! and stop if you specify iyear=0.
 !
 ! "idayct" is a day count.  It is either the day number during the
@@ -395,7 +394,7 @@
 !
 ! PORTABILITY
 !
-! This subroutine is written in standard FORTRAN 90.
+! This subroutine is written in standard Fortran90.
 ! It calls no external functions or subroutines and should run
 ! without problem on any computer having a 32-bit word or longer.
 !
@@ -446,7 +445,7 @@
 ! but WITHOUT ANY WARRANTY; without even the implied warranty of
 ! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 ! If you find any errors, please notify:
-! Jon Ahlquist <ahlquist@met.fsu.edu>
+! Jon Ahlquist
 ! Dept of Meteorology
 ! Florida State University
 ! Tallahassee, FL 32306-4520
@@ -500,7 +499,7 @@
    write(*,*)'For calndr(), you specified ioptn = ', ioptn
    write(*,*) 'Allowable values are 1 to 5 for the Gregorian calendar'
    write(*,*) 'and -1 to -5 for the Julian calendar.'
-   stop
+   call stop_the_code('error: stopping the code')
   endif
 !
 ! Options 1-3 have "iyear" as an input value.
@@ -511,7 +510,7 @@
       jyear = iyear
    else if (iyear == 0) then
       write(*,*) 'For calndr(), you specified the nonexistent year 0'
-      stop
+      call stop_the_code('error: stopping the code')
    else
       jyear = iyear + 1
    endif
@@ -522,7 +521,7 @@
    if ((jyear/4)*4 == jyear) then
       leap = 1
    endif
-   if ((ioptn > 0)               .and. &
+   if ((ioptn > 0) .and. &
          ((jyear/100)*100 == jyear) .and. &
          ((jyear/400)*400 /= jyear)     ) then
          leap = 0
@@ -733,7 +732,7 @@
    if ((jyear/4)*4 == jyear) then
       leap = 1
    endif
-   if ((ioptn > 0)               .and. &
+   if ((ioptn > 0) .and. &
       ((jyear/100)*100 == jyear) .and. &
       ((jyear/400)*400 /= jyear)     ) then
          leap = 0
@@ -742,7 +741,7 @@
 !        Now find the day number "iday".
 !        ndays is the number of days since the most recent 1 March,
 !        so ndays=0 on 1 March.
-   if (ndays <=305) then
+   if (ndays <= 305) then
       iday  = ndays + 60 + leap
    else
       iday  = ndays - 305

@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -62,19 +62,9 @@
 
 program smooth_sem
 
-
-
-#ifdef USE_MPI
-  use mpi
-#endif
-
   use postprocess_par
 
   implicit none
-
-#ifdef USE_MPI
-  include "precision.h"
-#endif
 
   integer, parameter :: NARGS = 6
 
@@ -95,7 +85,7 @@ program smooth_sem
 
   logical :: GPU_MODE
 
-  character(len=MAX_STRING_LEN) :: kernel_names(MAX_KERNEL_NAMES)
+  character(len=MAX_STRING_LEN),dimension(:),allocatable :: kernel_names
   character(len=MAX_STRING_LEN) :: kernel_names_comma_delimited
   integer :: nker
 
@@ -118,27 +108,36 @@ program smooth_sem
   real(kind=CUSTOM_REAL) :: dist_h,dist_v
   real(kind=CUSTOM_REAL) :: element_size
   real(kind=CUSTOM_REAL), PARAMETER :: PI = 3.1415927
-  real t1,t2
 
-  ! mpi initialization
+  ! timing
+  double precision, external :: wtime
+  double precision :: t1,t2
+
+  ! MPI initialization
   call init_mpi()
   call world_size(NPROC)
   call world_rank(myrank)
 
   if (myrank == 0) print *,"Running XSMOOTH_SEM on",NPROC,"processors"
-  call cpu_time(t1)
+  t1 = wtime()
 
   ! parse command line arguments
   if (command_argument_count() /= NARGS) then
     if (myrank == 0) then
         print *, 'USAGE:  mpirun -np NPROC bin/xsmooth_sem SIGMA_H SIGMA_V KERNEL_NAME INPUT_DIR OUPUT_DIR GPU_MODE'
-      stop ' Please check command line arguments'
+      call stop_the_code(' Please check command line arguments')
     endif
   endif
 
   ! synchronizes all processes
   call synchronize_all()
 
+  ! allocates array
+  allocate(kernel_names(MAX_KERNEL_NAMES), stat=ier)
+  if (ier /= 0) stop 'Error allocating kernel_names array'
+  kernel_names(:) = ''
+
+  ! parse command line arguments
   do i = 1, NARGS
     call get_command_argument(i,arg(i), status=ier)
   enddo
@@ -164,11 +163,11 @@ program smooth_sem
   enddo
 
   ! check smoothing radii
-  sigma_h2_inv = ( 1.0 / (2.0 * (sigma_h ** 2)) ) ! factor two for gaussian distribution with standard variance sigma
+  sigma_h2_inv = ( 1.0 / (2.0 * (sigma_h ** 2)) ) ! factor two for Gaussian distribution with standard variance sigma
   sigma_v2_inv = ( 1.0 / (2.0 * (sigma_v ** 2)) )
 
-  if ((1.0 / sigma_h2_inv) < 1.e-18) stop 'Error sigma_h2 zero, must non-zero'
-  if ((1.0 / sigma_v2_inv) < 1.e-18) stop 'Error sigma_v2 zero, must non-zero'
+  if ((1.0 / sigma_h2_inv) < 1.e-18) call stop_the_code('Error sigma_h2 zero, must non-zero')
+  if ((1.0 / sigma_v2_inv) < 1.e-18) call stop_the_code('Error sigma_v2 zero, must non-zero')
 
   ! adds margin to search radius
   element_size = max(sigma_h,sigma_v) * 0.5
@@ -179,7 +178,7 @@ program smooth_sem
 
   ! theoretic normal value
   ! (see integral over -inf to +inf of exp[- x*x/(2*sigma) ] = sigma * sqrt(2*pi) )
-  ! note: smoothing is using a gaussian (ellipsoid for sigma_h /= sigma_v),
+  ! note: smoothing is using a Gaussian (ellipsoid for sigma_h /= sigma_v),
   norm_h = 2.0*PI*sigma_h**2
   norm_v = sqrt(2.0*PI) * sigma_v
 
@@ -187,7 +186,7 @@ program smooth_sem
   if (myrank == 0) then
     print *,"command line arguments:"
     print *,"  smoothing sigma_h , sigma_v                : ",sigma_h,sigma_v
-    ! scalelength: approximately S ~ sigma * sqrt(8.0) for a gaussian smoothing
+    ! scalelength: approximately S ~ sigma * sqrt(8.0) for a Gaussian smoothing
     print *,"  smoothing scalelengths horizontal, vertical: ",sigma_h*sqrt(8.0),sigma_v*sqrt(8.0)
     print *,"  input dir : ",trim(input_dir)
     print *,"  output dir: ",trim(output_dir)
@@ -199,7 +198,7 @@ program smooth_sem
   open(IIN,file=trim(prname),status='old',action='read',form='unformatted',iostat=ier)
   if (ier /= 0) then
       print *,'Error: could not open database file: ',trim(prname)
-      stop 'Error opening _NSPEC_IBOOL file'
+      call stop_the_code('Error opening _NSPEC_IBOOL file')
   endif
   read(IIN) nspec_me
   allocate(ibool_me(NGLLX,NGLLZ,nspec_me))
@@ -213,7 +212,7 @@ program smooth_sem
     open(unit=IIN,file=trim(prname),status='old',action='read',form='unformatted',iostat=ier)
     if (ier /= 0) then
       print *,'Error: could not open database file: ',trim(prname)
-      stop 'Error reading neighbors external mesh file'
+      call stop_the_code('Error reading neighbors external mesh file')
     endif
     ! global point arrays
     read(IIN) xstore_me
@@ -224,7 +223,7 @@ program smooth_sem
     open(unit=IIN,file=trim(prname),status='old',action='read',form='unformatted',iostat=ier)
     if (ier /= 0) then
       print *,'Error: could not open database file: ',trim(prname)
-      stop 'Error reading neighbors external mesh file'
+      call stop_the_code('Error reading neighbors external mesh file')
     endif
     ! global point arrays
     read(IIN) zstore_me
@@ -245,9 +244,9 @@ program smooth_sem
 
 
 ! loops over slices
-! each process reads all the other slices and gaussian filters the values
+! each process reads all the other slices and Gaussian filters the values
   allocate(tk(nglob_me,nker), bk(nglob_me),stat=ier)
-  if (ier /= 0) stop 'Error allocating array tk and bk'
+  if (ier /= 0) call stop_the_code('Error allocating array tk and bk')
 
   tk = 0.0_CUSTOM_REAL
   bk = 0.0_CUSTOM_REAL
@@ -256,19 +255,19 @@ program smooth_sem
     ! slice database file
     write(prname,'(a,i6.6,a)') trim(input_dir)//'/proc',iproc,'_NSPEC_ibool.bin'
     open(IIN,file=trim(prname),status='old',action='read',form='unformatted',iostat=ier)
-    if (ier /= 0) stop 'Error opening ibool file'
+    if (ier /= 0) call stop_the_code('Error opening ibool file')
     read(IIN) nspec_other
     close(IIN)
-    allocate(xstore_other(NGLLX,NGLLZ,NSPEC_other),zstore_other(NGLLX,NGLLZ,NSPEC_other),&
+    allocate(xstore_other(NGLLX,NGLLZ,NSPEC_other),zstore_other(NGLLX,NGLLZ,NSPEC_other), &
              jacobian(NGLLX,NGLLZ,NSPEC_other),stat=ier)
-    if (ier /= 0) stop 'Error allocating array xstore_other etc.'
+    if (ier /= 0) call stop_the_code('Error allocating array xstore_other etc.')
 
      write(prname, '(a,i6.6,a)') trim(input_dir)//'/proc',iproc,'_x.bin'
     ! gets the coordinate x of the points located in the other slice
     open(unit=IIN,file=trim(prname),status='old',action='read',form='unformatted',iostat=ier)
     if (ier /= 0) then
       print *,'Error: could not open database file: ',trim(prname)
-      stop 'Error reading x coordinate'
+      call stop_the_code('Error reading x coordinate')
     endif
     ! global point arrays
     read(IIN) xstore_other
@@ -279,7 +278,7 @@ program smooth_sem
     open(unit=IIN,file=trim(prname),status='old',action='read',form='unformatted',iostat=ier)
     if (ier /= 0) then
       print *,'Error: could not open database file: ',trim(prname)
-      stop 'Error reading z coordinate'
+      call stop_the_code('Error reading z coordinate')
     endif
     ! global point arrays
     read(IIN) zstore_other
@@ -290,14 +289,14 @@ program smooth_sem
     open(unit=IIN,file=trim(prname),status='old',action='read',form='unformatted',iostat=ier)
     if (ier /= 0) then
       print *,'Error: could not open database file: ',trim(prname)
-      stop 'Error reading jacobian'
+      call stop_the_code('Error reading jacobian')
     endif
     ! global point arrays
     read(IIN) jacobian
     close(IIN)
 
     allocate(dat(NGLLX,NGLLZ,NSPEC_other),dat_store(NGLLX,NGLLZ,NSPEC_other,nker),stat=ier)
-    if (ier /= 0) stop 'Error allocating dat array'
+    if (ier /= 0) call stop_the_code('Error allocating dat array')
 
     do iker= 1, nker
       ! data file
@@ -306,7 +305,7 @@ program smooth_sem
       open(unit = IIN,file = trim(prname),status='old',action='read',form ='unformatted',iostat=ier)
       if (ier /= 0) then
         print *,'Error opening data file: ',trim(prname)
-        stop 'Error opening data file'
+        call stop_the_code('Error opening data file')
       endif
       read(IIN) dat
       close(IIN)
@@ -330,7 +329,7 @@ program smooth_sem
         do ispec2 = 1, nspec_other
 
           ! calculates horizontal and vertical distance between two element centers
-          call get_distance_square_vec(dist_h,dist_v,xstore_me(1,1,ispec),zstore_me(1,1,ispec),&
+          call get_distance_square_vec(dist_h,dist_v,xstore_me(1,1,ispec),zstore_me(1,1,ispec), &
                             xstore_other(1,1,ispec2),zstore_other(1,1,ispec2))
 
           ! checks distance between centers of elements
@@ -344,12 +343,12 @@ program smooth_sem
           do j = 1, NGLLZ
               do i = 1, NGLLX
                 iglob = ibool_me(i,j,ispec)
-                if (imask(iglob)==1) cycle
+                if (imask(iglob) == 1) cycle
 
-                ! calculate weights based on gaussian smoothing
+                ! calculate weights based on Gaussian smoothing
                 exp_val = 0.0_CUSTOM_REAL
 
-                call smoothing_weights_vec(xstore_me(i,j,ispec),zstore_me(i,j,ispec),sigma_h2_inv,sigma_v2_inv,exp_val,&
+                call smoothing_weights_vec(xstore_me(i,j,ispec),zstore_me(i,j,ispec),sigma_h2_inv,sigma_v2_inv,exp_val, &
                         xstore_other(:,:,ispec2),zstore_other(:,:,ispec2))
 
                 exp_val(:,:) = exp_val(:,:) * factor(:,:)
@@ -358,7 +357,7 @@ program smooth_sem
                 do iker= 1, nker
                 tk(iglob,iker) = tk(iglob,iker) + sum(exp_val(:,:) * dat_store(:,:,ispec2,iker))
                 enddo
-                ! normalization, integrated values of gaussian smoothing function
+                ! normalization, integrated values of Gaussian smoothing function
                 bk(iglob) = bk(iglob) + sum(exp_val(:,:))
 
               enddo
@@ -385,7 +384,7 @@ program smooth_sem
   if (myrank == 0) print *, 'Scaling values: min/max = ',minval(bk),maxval(bk)
 
   allocate(dat_smooth(NGLLX,NGLLZ,NSPEC_me,nker),stat=ier)
-  if (ier /= 0) stop 'Error allocating array dat_smooth'
+  if (ier /= 0) call stop_the_code('Error allocating array dat_smooth')
 
   dat_smooth(:,:,:,:) = 0.0_CUSTOM_REAL
 
@@ -399,7 +398,7 @@ program smooth_sem
    !           print *, 'Problem norm here --- ', ispec, i, j, bk(i,j,ispec)
     !        endif
                 iglob = ibool_me(i,j,ispec)
-            ! normalizes smoothed kernel values by integral value of gaussian weighting
+            ! normalizes smoothed kernel values by integral value of Gaussian weighting
             dat_smooth(i,j,ispec,:) = tk(iglob,:) / bk(iglob)
           enddo
         enddo
@@ -416,7 +415,7 @@ program smooth_sem
     write(ks_file,'(a,i6.6,a)') trim(output_dir)//'/proc',myrank,'_'//trim(kernel_names(iker))//'_smooth.bin'
 
     open(IOUT,file=trim(ks_file),status='unknown',form='unformatted',iostat=ier)
-    if (ier /= 0) stop 'Error opening smoothed kernel file'
+    if (ier /= 0) call stop_the_code('Error opening smoothed kernel file')
     write(IOUT) dat_smooth(:,:,:,iker)
     close(IOUT)
     if (myrank == 0) print *,'written: ',trim(ks_file)
@@ -428,29 +427,20 @@ program smooth_sem
   ! synchronizes all processes
   call synchronize_all()
 
-#ifdef USE_MPI
-  if (NPROC>1) then
-
+  if (NPROC > 1) then
     ! the maximum value for the smoothed kernel
     norm(:) = max_old(:)
-
-
-    call MPI_REDUCE(norm,max_old,nker,CUSTOM_MPI_TYPE,MPI_MAX,0,MPI_COMM_WORLD,ier)
+    call max_all_1Darray_cr(norm, max_old, nker)
 
     norm(:) = max_new(:)
+    call max_all_1Darray_cr(norm, max_new, nker)
 
-    call MPI_REDUCE(norm,max_new,nker,CUSTOM_MPI_TYPE,MPI_MAX,0,MPI_COMM_WORLD,ier)
     norm(:) = min_old(:)
-
-
-    call MPI_REDUCE(norm,min_old,nker,CUSTOM_MPI_TYPE,MPI_MIN,0,MPI_COMM_WORLD,ier)
+    call min_all_1Darray_cr(norm, min_old, nker)
 
     norm(:) = min_new(:)
-
-    call MPI_REDUCE(norm,min_new,nker,CUSTOM_MPI_TYPE,MPI_MIN,0,MPI_COMM_WORLD,ier)
-
+    call min_all_1Darray_cr(norm, min_new, nker)
   endif
-#endif
 
   do iker= 1, nker
     if (myrank == 0) then
@@ -461,12 +451,12 @@ program smooth_sem
     endif
   enddo
 
-  call cpu_time(t2)
+  t2 = wtime()
 
   if (GPU_Mode) then
-    print *,'Computation time with GPU:',t2-t1
+    print *,'Computation time with GPU:',sngl(t2-t1)
   else
-    print *,'Computation time with CPU:',t2-t1
+    print *,'Computation time with CPU:',sngl(t2-t1)
   endif
 
   if (myrank == 0) close(IIN)
@@ -498,7 +488,7 @@ end program smooth_sem
     do ii = 1, NGLLX
       ! gets vertical and horizontal distance
       call get_distance_square_vec(dist_h,dist_v,x0,z0,xx_elem(ii,jj),zz_elem(ii,jj))
-       ! gaussian function
+       ! Gaussian function
       exp_val(ii,jj) = exp(- sigma_h2_inv*dist_h - sigma_v2_inv*dist_v)
     enddo
   enddo

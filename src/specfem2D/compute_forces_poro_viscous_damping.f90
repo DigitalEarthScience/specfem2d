@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -31,20 +31,19 @@
 !
 !========================================================================
 
-
   subroutine compute_forces_poro_viscous_damping()
 
 ! viscous damping
 
-  use constants,only: CUSTOM_REAL,NGLLX,NGLLZ,ZERO,USE_PORO_VISCOUS_DAMPING
+  use constants, only: CUSTOM_REAL,NGLLX,NGLLZ,ZERO,USE_PORO_VISCOUS_DAMPING
 
   use specfem_par, only: nspec,it,SIMULATION_TYPE,SAVE_FORWARD, &
                          ATTENUATION_PORO_FLUID_PART, &
-                         ibool,kmato,ispec_is_poroelastic, &
+                         ibool,ispec_is_poroelastic, &
                          accels_poroelastic, &
                          accelw_poroelastic, &
                          velocw_poroelastic, &
-                         porosity,tortuosity,permeability,poroelastcoef, &
+                         phistore,tortstore,permstore,etastore, &
                          jacobian,wxgll,wzgll, &
                          rx_viscous,rz_viscous,theta_e,theta_s, &
                          b_viscodampx,b_viscodampz
@@ -66,44 +65,47 @@
   ! loop over spectral elements
   do ispec = 1,nspec
 
-    eta_f = poroelastcoef(2,2,kmato(ispec))
+    ! only for poroelastic elements
+    if (.not. ispec_is_poroelastic(ispec)) cycle
 
-    if (ispec_is_poroelastic(ispec) .and. eta_f > 0.d0) then
-      phi = porosity(kmato(ispec))
-      tort = tortuosity(kmato(ispec))
+    do j = 1,NGLLZ
+      do i = 1,NGLLX
+        ! fluid viscosity
+        eta_f = etastore(i,j,ispec)
 
-      permlxx = permeability(1,kmato(ispec))
-      permlxz = permeability(2,kmato(ispec))
-      permlzz = permeability(3,kmato(ispec))
+        ! only if viscous
+        if (eta_f > 0.d0) then
+          permlxx = permstore(1,i,j,ispec)
+          permlxz = permstore(2,i,j,ispec)
+          permlzz = permstore(3,i,j,ispec)
 
-      ! calcul of the inverse of k
-      detk = permlxx*permlzz - permlxz*permlxz
+          ! calcul of the inverse of k
+          detk = permlxx*permlzz - permlxz*permlxz
+          if (detk /= ZERO) then
+            invpermlxx = permlzz/detk
+            invpermlxz = -permlxz/detk
+            invpermlzz = permlxx/detk
+          else
+            call stop_the_code('Permeability matrix is not invertible')
+          endif
 
-      if (detk /= ZERO) then
-        invpermlxx = permlzz/detk
-        invpermlxz = -permlxz/detk
-        invpermlzz = permlxx/detk
-      else
-        stop 'Permeability matrix is not invertible'
-      endif
+          if (ATTENUATION_PORO_FLUID_PART) then
+            ! viscous attenuation is implemented following the memory variable formulation of
+            ! J. M. Carcione Wave fields in real media: wave propagation in anisotropic,
+            ! anelastic and porous media, Elsevier, p. 304-305, 2007
+            bl_relaxed_viscoelastic(1) = eta_f*invpermlxx*theta_e/theta_s
+            bl_relaxed_viscoelastic(2) = eta_f*invpermlxz*theta_e/theta_s
+            bl_relaxed_viscoelastic(3) = eta_f*invpermlzz*theta_e/theta_s
+          else
+            ! relaxed viscous coef
+            bl_unrelaxed_elastic(1) = eta_f*invpermlxx
+            bl_unrelaxed_elastic(2) = eta_f*invpermlxz
+            bl_unrelaxed_elastic(3) = eta_f*invpermlzz
+          endif
 
-      if (ATTENUATION_PORO_FLUID_PART) then
-        ! viscous attenuation is implemented following the memory variable formulation of
-        ! J. M. Carcione Wave fields in real media: wave propagation in anisotropic,
-        ! anelastic and porous media, Elsevier, p. 304-305, 2007
-        bl_relaxed_viscoelastic(1) = eta_f*invpermlxx*theta_e/theta_s
-        bl_relaxed_viscoelastic(2) = eta_f*invpermlxz*theta_e/theta_s
-        bl_relaxed_viscoelastic(3) = eta_f*invpermlzz*theta_e/theta_s
-      else
-        ! relaxed viscous coef
-        bl_unrelaxed_elastic(1) = eta_f*invpermlxx
-        bl_unrelaxed_elastic(2) = eta_f*invpermlxz
-        bl_unrelaxed_elastic(3) = eta_f*invpermlzz
-      endif
-
-      do j = 1,NGLLZ
-        do i = 1,NGLLX
           iglob = ibool(i,j,ispec)
+          phi = phistore(i,j,ispec)
+          tort = tortstore(i,j,ispec)
 
           ! computes the viscous damping term
           if (ATTENUATION_PORO_FLUID_PART) then
@@ -136,16 +138,16 @@
 
           ! reconstructed/backward wavefield
           ! viscous damping contribution
-          if (SIMULATION_TYPE == 1 .and. SAVE_FORWARD)  then
+          if (SIMULATION_TYPE == 1 .and. SAVE_FORWARD) then
             ! stores contribution
             b_viscodampx(i,j,ispec) = visc_x
             b_viscodampz(i,j,ispec) = visc_z
           endif
 
-        enddo
-      enddo
+        endif ! end of test if poroelastic element
 
-    endif ! end of test if poroelastic element
+      enddo
+    enddo
 
   enddo ! end of loop over all spectral elements
 
@@ -163,18 +165,17 @@
 !-------------------------------------------------------------------------------------
 !
 
-
   subroutine compute_forces_poro_viscous_damping_backward()
 
 ! viscous damping
 
-  use constants,only: CUSTOM_REAL,NGLLX,NGLLZ,ZERO,USE_PORO_VISCOUS_DAMPING
+  use constants, only: CUSTOM_REAL,NGLLX,NGLLZ,ZERO,USE_PORO_VISCOUS_DAMPING
 
   use specfem_par, only: nspec,NSTEP,it,SIMULATION_TYPE, &
-                         ibool,kmato,ispec_is_poroelastic, &
+                         ibool,ispec_is_poroelastic, &
                          b_accels_poroelastic, &
                          b_accelw_poroelastic, &
-                         porosity,tortuosity,poroelastcoef, &
+                         phistore,tortstore,etastore, &
                          b_viscodampx,b_viscodampz
 
   implicit none
@@ -196,16 +197,20 @@
   ! loop over spectral elements
   do ispec = 1,nspec
 
-    eta_f = poroelastcoef(2,2,kmato(ispec))
+    ! only for poroelastic elements
+    if (.not. ispec_is_poroelastic(ispec)) cycle
 
-    if (ispec_is_poroelastic(ispec) .and. eta_f > 0.d0) then
+    do j = 1,NGLLZ
+      do i = 1,NGLLX
+        ! fluid viscosity
+        eta_f = etastore(i,j,ispec)
 
-      phi = porosity(kmato(ispec))
-      tort = tortuosity(kmato(ispec))
-
-      do j = 1,NGLLZ
-        do i = 1,NGLLX
+        ! only if viscous
+        if (eta_f > 0.d0) then
           iglob = ibool(i,j,ispec)
+
+          phi = phistore(i,j,ispec)
+          tort = tortstore(i,j,ispec)
 
           ! reconstructed/backward wavefield
           ! viscous damping contribution
@@ -219,11 +224,9 @@
           ! fluid
           b_accelw_poroelastic(1,iglob) = b_accelw_poroelastic(1,iglob) - visc_x
           b_accelw_poroelastic(2,iglob) = b_accelw_poroelastic(2,iglob) - visc_z
-
-        enddo
+        endif
       enddo
-
-    endif ! end of test if poroelastic element
+    enddo
 
   enddo ! end of loop over all spectral elements
 

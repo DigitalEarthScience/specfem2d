@@ -4,11 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
-!               Pieyre Le Loher, pieyre DOT le-loher aT inria.fr
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -16,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -42,7 +41,7 @@
   integer,intent(in) :: NUM_COLORS
   double precision, dimension(NUM_COLORS),intent(out) :: red,green,blue
 
-  if (NUM_COLORS /= 236 ) stop 'check NUM_COLORS, must be equal to 236 in set_color_palette.f90'
+  if (NUM_COLORS /= 236 ) call stop_the_code('check NUM_COLORS, must be equal to 236 in set_color_palette.f90')
 
 ! red
   red(1) = 1.00000000000000

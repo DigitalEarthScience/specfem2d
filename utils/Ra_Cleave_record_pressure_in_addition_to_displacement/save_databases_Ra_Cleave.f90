@@ -16,7 +16,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -72,7 +72,7 @@
     ! opens Database file
     write(prname, "('./OUTPUT_FILES/Database',i5.5)") iproc
     open(unit=15,file=trim(prname),status='unknown',iostat=ios)
-    if( ios /= 0 ) stop 'error saving databases; check that directory OUTPUT_FILES exists'
+    if ( ios /= 0 ) stop 'error saving databases; check that directory OUTPUT_FILES exists'
 
     write(15,*) '#'
     write(15,*) '# Database for SPECFEM2D'
@@ -87,7 +87,7 @@
 
     call write_glob2loc_nodes_database(15, iproc, npgeo, 1)
 
-!   DK DK add support for using pml in mpi mode with external mesh
+!   DK DK add support for using PML in MPI mode with external mesh
 !   call write_partition_database(15, iproc, nspec, num_material, ngnod, 1)
     call write_partition_database(15, iproc, nspec, num_material, region_pml_external_mesh, ngnod, 1)
 
@@ -245,7 +245,7 @@
     write(15,*) 'nelemabs nelem_acoustic_surface num_fluid_solid_edges num_fluid_poro_edges'
     write(15,*) 'num_solid_poro_edges nnodes_tangential_curve'
     write(15,*) nelemabs_loc,nelem_acoustic_surface_loc, &
-                nedges_coupled_loc,nedges_acporo_coupled_loc,&
+                nedges_coupled_loc,nedges_acporo_coupled_loc, &
                 nedges_elporo_coupled_loc,nnodes_tangential_curve
 
     write(15,*) 'Material sets (num 1 rho vp vs 0 0 QKappa Qmu 0 0 0 0 0 0) or '
@@ -254,20 +254,20 @@
     do i=1,nb_materials
       if (icodemat(i) == ISOTROPIC_MATERIAL) then
          write(15,*) i,icodemat(i),rho_s(i),cp(i),cs(i),0,0,QKappa(i),Qmu(i),0,0,0,0,0,0
-      else if(icodemat(i) == POROELASTIC_MATERIAL) then
+      else if (icodemat(i) == POROELASTIC_MATERIAL) then
          write(15,*) i,icodemat(i),rho_s(i),rho_f(i),phi(i),tortuosity(i), &
-                    permxx(i),permxz(i),permzz(i),kappa_s(i),&
+                    permxx(i),permxz(i),permzz(i),kappa_s(i), &
                     kappa_f(i),kappa_fr(i),eta_f(i),mu_fr(i),Qmu(i)
       else
          write(15,*) i,icodemat(i),rho_s(i),cp(i),cs(i), &
-                    aniso3(i),aniso4(i),aniso5(i),aniso6(i),&
+                    aniso3(i),aniso4(i),aniso5(i),aniso6(i), &
                     aniso7(i),aniso8(i),QKappa(i),Qmu(i),0,0
       endif
     enddo
 
     write(15,*) 'Arrays kmato and knods for each bloc:'
 
-!   DK DK add support for using pml in mpi mode with external mesh
+!   DK DK add support for using PML in MPI mode with external mesh
 !   call write_partition_database(15, iproc, nspec, num_material, ngnod, 2)
     call write_partition_database(15, iproc, nspec, num_material, region_pml_external_mesh, ngnod, 2)
 

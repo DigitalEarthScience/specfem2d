@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -34,12 +34,11 @@
 ! define the forcing applied at the bottom boundary
 ! programmer Florian Cachoux and Raphael F. Garcia
 ! in collaboration with D. Komatitsch and R. Martin
-! variable forcing_type should be passed as a parameter
-! in future versions
+! variable forcing_type should be passed as a parameter in future versions
 
   subroutine acoustic_forcing_boundary(iglob,displ_x,displ_z)
 
-  use constants,only: TINYVAL,ZERO
+  use constants, only: TINYVAL,ZERO
   use specfem_par
 
   implicit none
@@ -59,8 +58,9 @@
   double precision :: t,t_used,signal_x1,signal_x2,fracx,fract
   double precision :: x,z
 
-  double precision :: f0 = 6000.0
+  double precision :: f0
 
+  f0 = 6000.0
   forcing_type = 1
 
   ! length of a PML element along x-axis at the edge which will be forced
@@ -70,19 +70,6 @@
   ! infrasounds / seismic
   tho = 30.0
 
-! gravity wave test function
-!  tho = 600.0
-!  xo = 500000.0
-!  lambdo = 20000.0
-
-! gravity wave test function
-!  tho = 600.0
-!  xo = 3000.0
-!  lambdo = 120.0
-
-! gravity wave /tsunami
-!  tho = 600.0 ! *20
-!  c = 200.0 ! /20
   A = 1
   x = coord(1,iglob)
   z = coord(2,iglob)
@@ -98,9 +85,9 @@
     !else
       ! infrasounds / seismic
       !displ_x = 0 !* Apo
-      !displ_z = A * (exp(-(alpha*(deltat*it-40-t0)/tho)**2) &
-      !             - exp(-(alpha*(deltat*it-70-t0)/tho)**2)) !* Apo
-      t_used = deltat*(it-1) - 0.0007d0
+      !displ_z = A * (exp(-(alpha*(DT*it-40-t0)/tho)**2) &
+      !             - exp(-(alpha*(DT*it-70-t0)/tho)**2)) !* Apo
+      t_used = DT*(it-1) - 0.0007d0
       !sin(2.0d0*pigrec*f0*t_used)
       if ((z < -1.5d0) .and. (z > -3.5d0)) then
         displ_x =  real(2.0d0 * f0*f0 * (2.0d0 * f0*f0 * t_used**2 - 1.0d0) * &
@@ -110,32 +97,20 @@
         displ_x =  0._CUSTOM_REAL
         displ_z = 0._CUSTOM_REAL
       endif
-      ! gravity wave test function
-      !  displ_x = 0 !* Apo
-      !  displ_z = A * ( exp(-(alpha*(x-(xo-lambdo/2))/lambdo)**2) - &
-      !                  exp(-(alpha*(x-(xo+lambdo/2))/lambdo)**2) ) * &
-      !            (exp(-(alpha*(deltat*it+1000-t0)/tho)**2) &
-      !            - exp(-(alpha*(deltat*it-1300-t0)/tho)**2)) !* Apo
-
-      ! gravity wave /tsunami
-      !  displ_x = 0 !* Apo
-      !  displ_z = A * (exp(-(alpha*(deltat*it-1000-t0)/tho)**2) &
-      !            - exp(-(alpha*(deltat*it-1600-t0)/tho)**2)) !* Apo
-    !endif
   endif
 
   !! Second test function : moving forcing
   if (forcing_type == 2) then
     displ_x = 0._CUSTOM_REAL !* Apo
-    displ_z = real(dble(A) * (exp(-(alpha*(deltat*it-40-t0-(x-delayed)/c)/tho)**2) &
-                 - exp(-(alpha*(deltat*it-70-t0-(x-delayed)/c)/tho)**2)),kind=CUSTOM_REAL) !* Apo
+    displ_z = real(dble(A) * (exp(-(alpha*(DT*it-40-t0-(x-delayed)/c)/tho)**2) &
+                 - exp(-(alpha*(DT*it-70-t0-(x-delayed)/c)/tho)**2)),kind=CUSTOM_REAL) !* Apo
   endif
 
   !! forcing external
   if (forcing_type == 3) then
     ngoce_time_step = 255
     n_models = 28
-    t =it*deltat
+    t = it*DT
 
     allocate(goce_time(ngoce_time_step))
     allocate(distance(n_models))
@@ -164,14 +139,14 @@
       ll = ll+1
     enddo
 
-    if (x==0 .and. it==1) then
+    if (x == 0 .and. it == 1) then
       displ_z =  real(syn(1,1),kind=CUSTOM_REAL)
     else
-      if (x==0) then
+      if (x == 0) then
         fract = (t-goce_time(ll-1))/(goce_time(ll)-goce_time(ll-1))
         displ_z =  real((syn(1,ll-1) + fract * (syn(1,ll)-syn(1,ll-1))),kind=CUSTOM_REAL)
       else
-        if (it==1) then
+        if (it == 1) then
           fracx = (x-distance(kk-1))/(distance(kk)-distance(kk-1))
           displ_z =  real((syn(kk-1,1) + fracx * (syn(kk,1)-syn(kk-1,1))),kind=CUSTOM_REAL)
         else

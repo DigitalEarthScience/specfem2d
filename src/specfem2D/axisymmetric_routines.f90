@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -72,14 +72,13 @@
 !   poroelasticity, anisotropy, Stacey absorbing boundaries, time stepping scheme /= 1, PML rotated, adjoint
 !   simulations, periodic conditions, noise tomographies
 
-  use constants,only: PI,TWO,TINYVAL
+  use constants, only: PI,TWO,TINYVAL,myrank
 
   use specfem_par, only: any_poroelastic, ROTATE_PML_ACTIVATE, &
-                         STACEY_ABSORBING_CONDITIONS, SIMULATION_TYPE, SAVE_FORWARD,time_stepping_scheme, &
+                         STACEY_ABSORBING_CONDITIONS, &
                          NSOURCES, source_type, ispec_selected_source, ADD_PERIODIC_CONDITIONS, &
-                         anglesource, is_on_the_axis, ispec_is_elastic, islice_selected_source,myrank
-
-  use specfem_par_noise,only: NOISE_TOMOGRAPHY
+                         anglesource, is_on_the_axis, ispec_is_elastic, islice_selected_source, &
+                         NOISE_TOMOGRAPHY
 
   implicit none
 
@@ -92,12 +91,6 @@
     call exit_MPI(myrank,'ROTATE_PML_ACTIVATE is not implemented for axisymmetric simulations')
   if (STACEY_ABSORBING_CONDITIONS) &
     call exit_MPI(myrank,'Stacey boundary conditions are not implemented for axisymmetric simulations,use PML instead')
-  if (SIMULATION_TYPE /= 1) &
-    call exit_MPI(myrank,'Just axisymmetric FORWARD simulations are possible so far')
-  if (SAVE_FORWARD) &
-    call exit_MPI(myrank,'SAVE_FORWARD has presently not been tested with axisymmetric simulations')
-  if (time_stepping_scheme /= 1) &
-    call exit_MPI(myrank,'Just Newmark scheme is possible for axisymmetric simulation')
   if (ADD_PERIODIC_CONDITIONS) &
     call exit_MPI(myrank,'Periodic conditions (ADD_PERIODIC_CONDITIONS) are not implemented for axisymmetric simulations')
   if (NOISE_TOMOGRAPHY /= 0) &
@@ -118,14 +111,14 @@
           if (((anglesource(isource) > TINYVAL) .and. (anglesource(isource) < PI) ) &    ! ... and has a radial component.
             .or. ( (anglesource(isource) > PI) .and. (anglesource(isource) < TWO*PI))) then
             print *, '***** WARNING *****'
-            print *, 'Axisymmetry : U_r(r=0)=0, Radial component of axial source will be ignored (anglesource /= 0 modulo 180)'
-            print *, ''
+            print *, 'Axisymmetry: U_r(r=0)=0, Radial component of axial source will be ignored (anglesource /= 0 modulo 180)'
+            print *
           endif
         endif
       else                                                      !   If the source is not on an axial element
         print *, '***** WARNING *****'
-        print *, 'Axisymmetry : physically a non axial source is a circular source!'
-        print *, ''
+        print *, 'Axisymmetry: physically a non axial source is a circular source!'
+        print *
       endif
     endif
   enddo
@@ -136,18 +129,19 @@
 !------------------------------------------------------------------------------------------------
 !
 
-  subroutine enforce_zero_radial_displacements_on_the_axis()
+  subroutine enforce_zero_radial_displacements_on_the_axis(displ_elastic,veloc_elastic,accel_elastic)
 
 ! This subroutine enforces zero displacement, velocity and acceleration on the axis for elastic elements;
 ! for acoustic elements we do not need to do anything, some gradient components
 ! will be set to zero on the axis later in the code, when they are computed
 
-  use constants,only: NGLJ,NGLLZ,ZERO
+  use constants, only: NDIM,NGLJ,NGLLZ,ZERO,CUSTOM_REAL
 
-  use specfem_par, only: ispec_is_elastic, ibool, nelem_on_the_axis, ispec_of_axial_elements, is_on_the_axis, &
-          displ_elastic, veloc_elastic, accel_elastic
+  use specfem_par, only: nglob, ispec_is_elastic, ibool, nelem_on_the_axis, ispec_of_axial_elements, is_on_the_axis
 
   implicit none
+
+  real(kind=CUSTOM_REAL), dimension(NDIM,nglob),intent(inout) :: displ_elastic,veloc_elastic,accel_elastic
 
   ! local variables
   integer :: i_on_the_axis,ispec_axis,i,j

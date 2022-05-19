@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -33,7 +33,7 @@
 
   subroutine define_derivation_matrices()
 
-  use constants,only: GAUSSALPHA,GAUSSBETA,NGLLX,NGLLZ,ZERO,CUSTOM_REAL
+  use constants, only: GAUSSALPHA,GAUSSBETA,NGLLX,NGLLZ,ZERO,CUSTOM_REAL
 
   use specfem_par, only: xigll,zigll,wxgll,wzgll,hprime_xx,hprime_zz,hprimewgll_xx,hprimewgll_zz
 
@@ -54,7 +54,7 @@
   call zwgljd(xigll,wxgll_dble,NGLLX,GAUSSALPHA,GAUSSBETA)
   call zwgljd(zigll,wzgll_dble,NGLLZ,GAUSSALPHA,GAUSSBETA)
 
-  ! converts to custom_real
+  ! converts to CUSTOM_REAL
   wxgll(:) = real(wxgll_dble(:),kind=CUSTOM_REAL)
   wzgll(:) = real(wzgll_dble(:),kind=CUSTOM_REAL)
 
@@ -91,7 +91,7 @@
 
   subroutine define_GLJ_derivation_matrix()
 
-  use constants,only: NGLJ,CUSTOM_REAL
+  use constants, only: NGLJ,CUSTOM_REAL
 
   use specfem_par, only: xiglj,wxglj,hprimeBar_xx,hprimeBarwglj_xx
 
@@ -111,7 +111,7 @@
   ! set up coordinates of the Gauss-Lobatto-Jacobi points
   call zwgljd(xiglj,wxglj_dble,NGLJ,alphaGLJ,betaGLJ)
 
-  ! converts to custom_real
+  ! converts to CUSTOM_REAL
   wxglj(:) = real(wxglj_dble(:),kind=CUSTOM_REAL)
 
 ! calculate derivatives of the GLJ quadrature polynomials

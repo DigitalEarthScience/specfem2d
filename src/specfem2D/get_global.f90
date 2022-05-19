@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -35,9 +35,9 @@
 
   subroutine get_global()
 
-  use constants,only: NGLLX,NGLLZ,MAX_STRING_LEN
+  use constants, only: NGLLX,NGLLZ,MAX_STRING_LEN,IN_DATA_FILES,IMAIN
 
-  use specfem_par, only : nspec,ibool,copy_ibool_ori,integer_mask_ibool,SAVE_MODEL,myrank
+  use specfem_par, only: nspec,ibool,copy_ibool_ori,integer_mask_ibool,SAVE_MODEL,myrank
 
   implicit none
 
@@ -70,14 +70,22 @@
     enddo
   enddo
 
-  if (trim(SAVE_MODEL) == 'binary') then
-    write(outputname,'(a,i6.6,a)') './DATA/proc',myrank,'_NSPEC_ibool.bin'
+  ! file output for ibool
+  if (trim(SAVE_MODEL) == 'binary' .or. trim(SAVE_MODEL) == 'gll') then
+    write(outputname,'(a,i6.6,a)') trim(IN_DATA_FILES)//'proc',myrank,'_NSPEC_ibool.bin'
 
     open(888,file=trim(outputname),status='unknown',form='unformatted',iostat=ier)
-    if (ier /= 0) stop 'Error opening smoothed kernel file'
+    if (ier /= 0) call stop_the_code('Error opening smoothed kernel file')
     write(888) nspec
     write(888) ibool
     close(888)
+
+    ! user output
+    if (myrank == 0) then
+      write(IMAIN,*) '  saving ibool array to: ',trim(outputname)
+      write(IMAIN,*)
+      call flush_IMAIN()
+    endif
   endif
 
   end subroutine get_global
@@ -90,7 +98,7 @@
 
   subroutine get_global_indirect_addressing(nspec,nglob,ibool,copy_ibool_ori,integer_mask_ibool)
 
-  use constants,only: NGLLX,NGLLZ
+  use constants, only: NGLLX,NGLLZ
 
   implicit none
 

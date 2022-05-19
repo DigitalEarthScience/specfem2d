@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -31,26 +31,32 @@
 !
 !========================================================================
 
-subroutine iterate_time()
 
-#ifdef USE_MPI
-  use mpi
-#endif
+  subroutine iterate_time()
 
-  use constants,only: IMAIN,NOISE_SAVE_EVERYWHERE
+  use constants, only: IMAIN,NOISE_SAVE_EVERYWHERE
   use specfem_par
-  use specfem_par_gpu
-  use specfem_par_noise,only: NOISE_TOMOGRAPHY
+  use specfem_par_movie, only: MOVIE_SIMULATION
 
   implicit none
 
   ! local parameters
+
+! time the code in order to compute element weights, which can then be used to define typical weights
+! for the SCOTCH domain decomposer (this is crucial, in particular in the presence of PML elements
+! and/or for mixed simulations, for instance fluid/solid and so on)
+  logical, parameter :: TIME_THE_COST_TO_COMPUTE_WEIGHTS_FOR_THE_DOMAIN_DECOMPOSER = .false.
+
   ! time
   character(len=8) :: datein
   character(len=10) :: timein
   character(len=5) :: zone
   integer, dimension(8) :: time_values
   integer :: year,mon,day,hr,minutes,timestamp
+
+  ! timing
+  double precision,external :: wtime
+  double precision :: start_time_of_time_loop,duration_of_time_loop_in_seconds
 
   if (myrank == 0) write(IMAIN,400) ! Write = T i m e  e v o l u t i o n  l o o p =
 !
@@ -78,10 +84,6 @@ subroutine iterate_time()
   ! convert to seconds instead of minutes, to be more precise for 2D runs, which can be fast
   timestamp_seconds_start = timestamp*60.d0 + time_values(7) + time_values(8)/1000.d0
 
-! *********************************************************
-! ************* MAIN LOOP OVER THE TIME STEPS *************
-! *********************************************************
-
   ! synchronize all processes to make sure everybody is ready to start time loop
   call synchronize_all()
 
@@ -92,98 +94,291 @@ subroutine iterate_time()
     call flush_IMAIN()
   endif
 
+  ! time loop increments begin/end
+  it_begin = 1
+  it_end = NSTEP
+
   ! initialize variables for writing seismograms
-  seismo_offset = 0
+  seismo_offset = it_begin - 1
   seismo_current = 0
 
-  do it = 1,NSTEP
+  ! timing safety checks
+  if (TIME_THE_COST_TO_COMPUTE_WEIGHTS_FOR_THE_DOMAIN_DECOMPOSER) then
+    if (NPROC /= 1) &
+      call exit_MPI(myrank,'timing for element weights should be done in serial mode')
+    if (NSTEP < 1000) &
+      call exit_MPI(myrank,'timing for element weights should be done with at least 1000 time steps')
+    if (NSTEP > 10000) &
+      call exit_MPI(myrank,'timing for element weights does not need to be done with more than 10000 time steps')
+    if (NTSTEP_BETWEEN_OUTPUT_INFO < NSTEP / 5) &
+      call exit_MPI(myrank,'timing for element weights should be done with NTSTEP_BETWEEN_OUTPUT_INFO not smaller than NSTEP / 5')
+    if (SIMULATION_TYPE /= 1) &
+      call exit_MPI(myrank,'timing for element weights should be done with SIMULATION_TYPE = 1')
+    if (.not. P_SV) &
+      call exit_MPI(myrank,'timing for element weights should be done with P_SV set to true')
+    if (GPU_MODE) &
+      call exit_MPI(myrank,'timing for element weights should be done with GPU_MODE turned off')
+    if (save_ASCII_seismograms) &
+      call exit_MPI(myrank,'timing for element weights should be done with save_ASCII_seismograms turned off')
+    if (save_binary_seismograms_single) &
+      call exit_MPI(myrank,'timing for element weights should be done with save_binary_seismograms_single turned off')
+    if (save_binary_seismograms_double) &
+      call exit_MPI(myrank,'timing for element weights should be done with save_binary_seismograms_double turned off')
+    if (output_color_image) &
+      call exit_MPI(myrank,'timing for element weights should be done with output_color_image turned off')
+    if (output_postscript_snapshot) &
+      call exit_MPI(myrank,'timing for element weights should be done with output_postscript_snapshot turned off')
+    if (output_wavefield_dumps) &
+      call exit_MPI(myrank,'timing for element weights should be done with output_wavefield_dumps turned off')
+    if (OUTPUT_ENERGY) &
+      call exit_MPI(myrank,'timing for element weights should be done with OUTPUT_ENERGY turned off')
+    if (COMPUTE_INTEGRATED_ENERGY_FIELD) &
+      call exit_MPI(myrank,'timing for element weights should be done with COMPUTE_INTEGRATED_ENERGY_FIELD turned off')
+  endif
+
+  ! timing
+  start_time_of_time_loop = wtime()
+
+! *********************************************************
+! ************* MAIN LOOP OVER THE TIME STEPS *************
+! *********************************************************
+
+  do it = it_begin,it_end
     ! compute current time
-    timeval = (it-1) * deltat
+    current_timeval = (it-1) * DT
 
     ! display time step and max of norm of displacement
-    if (mod(it,NSTEP_BETWEEN_OUTPUT_INFO) == 0 .or. it == 5 .or. it == NSTEP) then
+    if (mod(it,NTSTEP_BETWEEN_OUTPUT_INFO) == 0 .or. it == 5 .or. it == NSTEP) then
       call check_stability()
     endif
 
     do i_stage = 1, stage_time_scheme
 
-      ! updates wavefields using Newmark time scheme
-      ! forward wavefield (acoustic/elastic/poroelastic)
-      call update_displ_Newmark()
-      ! reconstructed/backward wavefields
-      if (SIMULATION_TYPE == 3) call update_displ_Newmark_backward()
+      ! updates wavefields
+      select case(time_stepping_scheme)
+      case (1)
+        ! Newmark time scheme
+        ! forward wavefield (acoustic/elastic/poroelastic)
+        call update_displ_Newmark()
+        ! reconstructed/backward wavefields
+        if (SIMULATION_TYPE == 3 .and. .not. NO_BACKWARD_RECONSTRUCTION) call update_displ_Newmark_backward()
 
-      ! acoustic domains
-      if (ACOUSTIC_SIMULATION) then
+      case (2,3)
+        ! LDDRK, RK4
+        if (any_acoustic) then
+          if (.not. GPU_MODE) then
+            potential_dot_dot_acoustic(:) = 0._CUSTOM_REAL
+            if (SIMULATION_TYPE == 3 .and. .not. NO_BACKWARD_RECONSTRUCTION) b_potential_dot_dot_acoustic(:) = 0._CUSTOM_REAL
+          endif
+        endif
+        if (any_elastic) then
+          if (.not. GPU_MODE) then
+            accel_elastic(:,:) = 0._CUSTOM_REAL
+            if (SIMULATION_TYPE == 3 .and. .not. NO_BACKWARD_RECONSTRUCTION) b_accel_elastic(:,:) = 0._CUSTOM_REAL
+          endif
+        endif
+        if (any_poroelastic) then
+          if (.not. GPU_MODE) then
+            accels_poroelastic(:,:) = 0._CUSTOM_REAL
+            accelw_poroelastic(:,:) = 0._CUSTOM_REAL
+            if (SIMULATION_TYPE == 3 .and. .not. NO_BACKWARD_RECONSTRUCTION) then
+              b_accels_poroelastic(:,:) = 0._CUSTOM_REAL
+              b_accelw_poroelastic(:,:) = 0._CUSTOM_REAL
+            endif
+          endif
+        endif
+
+      case (4)
+        ! symplectic PEFRL
+        ! forward wavefield (acoustic/elastic/poroelastic)
+        call update_displ_symplectic()
+        ! reconstructed/backward wavefields
+        if (SIMULATION_TYPE == 3 .and. .not. NO_BACKWARD_RECONSTRUCTION) call update_displ_symplectic_backward()
+
+      case default
+        call stop_the_code('Error time scheme not implemente yet in iterate_time()')
+      end select
+
+
+      ! note: the order of the computations for acoustic and elastic domains is crucial for coupled simulations.
+      !
+      !       the coupling terms involve continuity of traction, i.e., the exchange of pressure from fluid
+      !       to the solid traction (added in the elastic domain),
+      !       and continuity of the normal displacement, i.e., the exchange of the normal component of displacement from solid
+      !       to the fluid (added in the acoustic domain).
+      !
+      !       for forward simulations:
+      !         pressure p becomes
+      !           p = - \partial_t^2 chi
+      !         due to the definition of potential chi and displacement u:
+      !           u = 1/rho grad(chi)
+      !
+      !         given n is the normal to the fluid-solid interface,
+      !         the coupling term for elastic media involves: n * T = - p_fluid n = \partial_t^2 chi n
+      !         the coupling term for acoustic media involves: 1/rho grad(chi) * n = n * u
+      !
+      !         where T is the stress tensor, p_fluid pressure, u displacement, chi the acoustic scalar potential,
+      !         and rho is density.
+      !
+      !         \partial_t^2 chi is array potential_dot_dot_acoustic and only available after the acoustic domain update.
+      !         thus, by using a Newmark time scheme the update order becomes important (see Chaljub & Valette 2004):
+      !         1. acoustic domain update (using displ_accel for the coupling)
+      !         2. elastic domain update  (using potential_dot_dot_acoustic for the coupling)
+      !         (3. poroelastic domain update with same expression as for elastic domains)
+      !
+      !       for kernel simulations:
+      !         using Lagrange multiplier optimization as in Luo et al. (2013), one finds that once the definition of the forward
+      !         acoustic potential is chosen as u = 1/rho grad(chi), then the coupling of the adjoint
+      !         wavefields between fluid-solid interfaces becomes different:
+      !
+      !         the coupling term for elastic media involves: n * T^adj = - p_fluid^adj n = - chi^adj n
+      !         the coupling term of acoustic media involves: 1/rho grad(chi^adj) * n = - n * \partial_t^2 u^adj
+      !
+      !         where T^adj is the adjoint stress tensor, p_fluid^adj the adjoint pressure in the fluid.
+      !
+      !         note that the adjoint pressure p^adj for the adjoint wavefield corresponds to
+      !           p^adj = chi^adj
+      !         with an adjoint potential definition chi^adj related to adjoint acceleration (instead of displacement)
+      !           \partial_t^2 u^adj = - 1/rho grad(chi^adj)
+      !
+      !         since elastic media now couples with potential_acoustic rather than potential_dot_dot_acoustic, the order
+      !         of the domain updates switches to:
+      !         1. elastic domain update  (using -potential_acoustic for the coupling) to have \partial_t^2 u^adj at time n+1
+      !         (1b. poroelastic domain update uses same terms as elastic domain)
+      !         2. acoustic domain update (using -accel_elastic for the coupling)
+      !
+      !       for purely adjoint simulations:
+      !         if we choose a pure adjoint simulation, without forward wavefield propagation for kernel computations,
+      !         then we are free to choose and define the adjoint acoustic potential.
+      !         the coupling terms between adjoint wavefields then depend on the chosen potential definition, i.e.,
+      !         (i)  if we choose a displacement potential:
+      !                u^adj = 1/rho grad(chi^adj)
+      !              then the adjoint pressure is p^adj = - potential_dot_dot_acoustic and we have the same coupling terms
+      !              as for the forward case.
+      !
+      !         (ii) if we choose an acceleration potential:
+      !                \partial_t^2 u^adj = - 1/rho grad(chi^adj)
+      !              then the adjoint pressure is p^adj = chi^adj and we have the same coupling terms as for kernel simulations.
+      !
+      !       here, we choose to have (i) for a pure adjoint simulations, thus the coupling needs only a special treatment
+      !       for kernel simulations.
+      !
+      !       and, if there is no coupling between different media, then the ordering is obviously not important
+      !       as the domains can be computed independently from each other.
+
+      select case(SIMULATION_TYPE)
+      case (1,2)
+        ! forward/adjoint simulations
+        ! acoustic domains
+        if (ACOUSTIC_SIMULATION) then
+          if (.not. GPU_MODE) then
+            call compute_forces_viscoacoustic_main()
+          else
+            ! on GPU
+            if (any_acoustic) call compute_forces_viscoacoustic_GPU(.false.)
+          endif
+        endif
+        ! elastic domains
+        if (ELASTIC_SIMULATION) then
+          if (.not. GPU_MODE) then
+            call compute_forces_viscoelastic_main()
+          else
+            ! on GPU
+            if (any_elastic) call compute_forces_viscoelastic_GPU(.false.)
+          endif
+        endif
+        ! poroelastic domains
+        if (POROELASTIC_SIMULATION) then
+          if (.not. GPU_MODE) then
+            call compute_forces_poroelastic_main()
+          else
+            ! on GPU
+            if (any_poroelastic) call exit_MPI(myrank,'poroelastic not implemented in GPU MODE yet')
+          endif
+        endif
+
+      case (3)
+        ! kernel simulations
+        ! forward (adjoint) wavefields use switched update ordering
+        ! poroelastic domains
+        if (POROELASTIC_SIMULATION) then
+          if (.not. GPU_MODE) then
+            call compute_forces_poroelastic_main()
+          else
+            ! on GPU
+            if (any_poroelastic) call exit_MPI(myrank,'poroelastic not implemented in GPU MODE yet')
+          endif
+        endif
+        ! elastic domains
+        if (ELASTIC_SIMULATION) then
+          if (.not. GPU_MODE) then
+            call compute_forces_viscoelastic_main()
+          else
+            ! on GPU
+            if (any_elastic) call compute_forces_viscoelastic_GPU(.false.)
+          endif
+        endif
+        ! acoustic domains
         if (.not. GPU_MODE) then
-          call compute_forces_acoustic_main()
-          if (SIMULATION_TYPE == 3) call compute_forces_acoustic_main_backward()
+          call compute_forces_viscoacoustic_main()
         else
           ! on GPU
-          if (any_acoustic) call compute_forces_acoustic_GPU()
+          if (any_acoustic) call compute_forces_viscoacoustic_GPU(.false.)
         endif
-      endif
 
-      ! gravitoacoustic domains
-      if (GRAVITOACOUSTIC_SIMULATION) then
-        if (.not. GPU_MODE) then
-          call compute_forces_gravitoacoustic_main()
-        else
-          ! on GPU
-          if (any_gravitoacoustic) call exit_MPI(myrank,'gravitoacoustic not implemented in GPU MODE yet')
-        endif
-      endif
+        ! backward/reconstructed wavefields
+        if (.not. NO_BACKWARD_RECONSTRUCTION) then
+          ! note: the reconstruction of the forward wavefield uses the last wavefield and backpropagates it in time.
+          !       backpropagation can use the same coupling terms as in the forward propagation case, thus the same
+          !       order as for forward simulations.
+          if (.not. GPU_MODE) then
+            ! acoustic domains
+            call compute_forces_viscoacoustic_main_backward()
+            ! elastic domains
+            call compute_forces_viscoelastic_main_backward()
+            ! poroelastic domains
+            call compute_forces_poroelastic_main_backward()
+          else
+            ! on GPU
+            if (coupled_acoustic_elastic) then
+              ! coupled simulations need a re-ordering of the domain updates
+              ! due to a change of the coupling terms for adjoint wavefields
+              !
+              ! we don't need to call this for un-coupled simulation, as both wavefields will be taken take of in the
+              ! GPU routines. only when the coupling terms for adjoint simulations are involved, we need to separate
+              ! forward/adjoint and backward wavefield computations.
 
-      ! elastic domains
-      if (ELASTIC_SIMULATION) then
-        if (.not. GPU_MODE) then
-          call compute_forces_viscoelastic_main()
-          if (SIMULATION_TYPE == 3) call compute_forces_viscoelastic_main_backward()
-        else
-          ! on GPU
-          if (any_elastic) call compute_forces_viscoelastic_GPU()
+              ! here, we still need to compute reconstructed/backward wavefields
+              ! acoustic domains
+              if (any_acoustic) call compute_forces_viscoacoustic_GPU(.true.)  ! only reconstructed/backward wavefields
+              ! elastic domains
+              if (any_elastic) call compute_forces_viscoelastic_GPU(.true.)   ! only reconstructed/backward wavefields
+              ! poroelastic domains not implemented on GPUs yet...
+              if (any_poroelastic) call exit_MPI(myrank,'poroelastic coupling not implemented in GPU MODE yet')
+            endif
+          endif
         endif
-      endif
-
-      ! poroelastic domains
-      if (POROELASTIC_SIMULATION) then
-        if (.not. GPU_MODE) then
-          call compute_forces_poroelastic_main()
-          if (SIMULATION_TYPE == 3) call compute_forces_poroelastic_main_backward()
-        else
-          ! on GPU
-          if (any_poroelastic) call exit_MPI(myrank,'poroelastic not implemented in GPU MODE yet')
-        endif
-      endif
+      end select
 
     enddo ! stage_time_scheme (LDDRK or RK)
 
     ! reads in lastframe for adjoint/kernels calculation
-    if (SIMULATION_TYPE == 3 .and. it == 1) then
+    if (SIMULATION_TYPE == 3 .and. it == 1 .and. .not. NO_BACKWARD_RECONSTRUCTION) then
       call read_forward_arrays()
     endif
 
-    ! noise simulations
-    select case (NOISE_TOMOGRAPHY)
-    case (1)
-      ! stores generating wavefield
-      call save_surface_movie_noise()
-    case (2)
-      ! stores complete wavefield for reconstruction
-      if (NOISE_SAVE_EVERYWHERE) call save_surface_movie_noise()
-    case (3)
-      ! reconstructs forward wavefield based on complete wavefield storage
-      if (NOISE_SAVE_EVERYWHERE) call read_wavefield_noise()
-    end select
+    if (NO_BACKWARD_RECONSTRUCTION .and. (SAVE_FORWARD .or. SIMULATION_TYPE == 3) ) then
+      call manage_no_backward_reconstruction_io()
+    endif
 
-    ! computes kinetic and potential energy
-    if (output_energy) then
+    if (OUTPUT_ENERGY) then
       call compute_and_output_energy()
     endif
 
     ! computes integrated_energy_field
     if (COMPUTE_INTEGRATED_ENERGY_FIELD) then
-      call it_compute_integrated_energy_field_and_output() ! compute the field int_0^t v^2 dt and write it on file if needed
+      ! compute the field int_0^t v^2 dt and write it on file if needed
+      call compute_integrated_energy_field_and_output()
     endif
 
     ! loop on all the receivers to compute and store the seismograms
@@ -195,9 +390,58 @@ subroutine iterate_time()
     endif
 
     ! display results at given time steps
-    call write_movie_output()
+    if (MOVIE_SIMULATION) then
+      call write_movie_output(.true.)
+    endif
+
+    ! first step of noise tomography, i.e., save a surface movie at every time step
+    if (NOISE_TOMOGRAPHY == 1) then
+      call noise_save_surface_movie()
+    endif
+
+    ! noise simulations
+    if (NOISE_SAVE_EVERYWHERE) then
+      select case (NOISE_TOMOGRAPHY)
+      case (2)
+        ! stores complete wavefield for reconstruction
+        call noise_save_surface_movie()
+      case (3)
+        ! reconstructs forward wavefield based on complete wavefield storage
+        call noise_read_wavefield()
+      end select
+    endif
 
   enddo ! end of the main time loop
+
+  if (myrank == 0) then
+    duration_of_time_loop_in_seconds = wtime() - start_time_of_time_loop
+    write(IMAIN,*)
+    write(IMAIN,*) 'Total duration of the time loop in seconds = ',sngl(duration_of_time_loop_in_seconds),' s'
+    write(IMAIN,*) 'Total number of time steps = ',NSTEP
+    write(IMAIN,*) 'Average duration of a time step of the time loop = ',sngl(duration_of_time_loop_in_seconds / NSTEP),' s'
+    write(IMAIN,*) 'Total number of spectral elements in the mesh = ',NSPEC
+    write(IMAIN,*) '    of which ',NSPEC - count(ispec_is_PML),' are regular elements'
+    write(IMAIN,*) '    and ',count(ispec_is_PML),' are PML elements.'
+    write(IMAIN,*) 'Average duration of the calculation per spectral element = ', &
+                         sngl(duration_of_time_loop_in_seconds / (NSTEP * NSPEC)),' s'
+    write(IMAIN,*)
+    call flush_IMAIN()
+  endif
+
+  call date_and_time(datein,timein,zone,time_values)
+  year = time_values(1)
+  mon = time_values(2)
+  day = time_values(3)
+  hr = time_values(5)
+  minutes = time_values(6)
+  call convtime(timestamp,year,mon,day,hr,minutes)
+
+  if (myrank == 0) then
+   write(IMAIN,*)
+   write(IMAIN,*) 'Total duration of the timeloop in seconds, measured using '
+   write(IMAIN,*)  'date and time of the system : ',sngl(timestamp*60.d0 + time_values(7) + &
+                   time_values(8)/1000.d0 - timestamp_seconds_start),' s'
+  endif
 
 ! *********************************************************
 ! ************* END MAIN LOOP OVER THE TIME STEPS *********
@@ -206,29 +450,24 @@ subroutine iterate_time()
   ! Transfer fields from GPU card to host for further analysis
   if (GPU_MODE) call it_transfer_from_GPU()
 
-
   !----  formats
   400 format(/1x,41('=')/,' =  T i m e  e v o l u t i o n  l o o p  ='/1x,41('=')/)
 
-end subroutine iterate_time
+  end subroutine iterate_time
 
 !
 !----------------------------------------------------------------------------------------
 !
 
-subroutine it_transfer_from_GPU()
+  subroutine it_transfer_from_GPU()
 
 ! transfers fields on GPU back onto CPU
 
-  use constants,only: TWO,FOUR_THIRDS
+  use constants, only: TWO,FOUR_THIRDS
   use specfem_par
-  use specfem_par_gpu
+  use specfem_par_gpu, only: Mesh_pointer,NGLOB_AB,NSPEC_AB
 
   implicit none
-
-  ! local parameters
-  integer :: i,j,ispec,iglob
-  real(kind=CUSTOM_REAL) :: rhol,mul,kappal
 
   ! Fields transfer for imaging
   ! acoustic domains
@@ -239,24 +478,7 @@ subroutine it_transfer_from_GPU()
 
   ! elastic domains
   if (any_elastic) then
-    call transfer_fields_el_from_device(NDIM*NGLOB_AB,tmp_displ_2D,tmp_veloc_2D,tmp_accel_2D,Mesh_pointer)
-
-    if (P_SV) then
-      ! P-SV waves
-      displ_elastic(1,:) = tmp_displ_2D(1,:)
-      displ_elastic(2,:) = tmp_displ_2D(2,:)
-
-      veloc_elastic(1,:) = tmp_veloc_2D(1,:)
-      veloc_elastic(2,:) = tmp_veloc_2D(2,:)
-
-      accel_elastic(1,:) = tmp_accel_2D(1,:)
-      accel_elastic(2,:) = tmp_accel_2D(2,:)
-    else
-      ! SH waves
-      displ_elastic(1,:) = tmp_displ_2D(1,:)
-      veloc_elastic(1,:) = tmp_veloc_2D(1,:)
-      accel_elastic(1,:) = tmp_accel_2D(1,:)
-    endif
+    call transfer_fields_el_from_device(NDIM*NGLOB_AB,displ_elastic,veloc_elastic,accel_elastic,Mesh_pointer)
   endif
 
   ! finishes kernel calculations
@@ -266,188 +488,72 @@ subroutine it_transfer_from_GPU()
     if (any_acoustic) then
       call transfer_kernels_ac_to_host(Mesh_pointer,rho_ac_kl,kappa_ac_kl,NSPEC_AB)
 
+      ! note: acoustic kernels in CPU-version add (delta * NTSTEP_BETWEEN_COMPUTE_KERNELS) factors at each computation.
+      !       for the GPU-kernels, the NSTEP_** is still missing... adding it here
+      rho_ac_kl(:,:,:) = rho_ac_kl(:,:,:) * NTSTEP_BETWEEN_COMPUTE_KERNELS
+      kappa_ac_kl(:,:,:) = kappa_ac_kl(:,:,:) * NTSTEP_BETWEEN_COMPUTE_KERNELS
+
       rhop_ac_kl(:,:,:) = rho_ac_kl(:,:,:) + kappa_ac_kl(:,:,:)
       alpha_ac_kl(:,:,:) = TWO *  kappa_ac_kl(:,:,:)
     endif
 
     ! elastic domains
     if (any_elastic) then
+      ! note: kernel values in the elastic case will be multiplied with material properties
+      !       in save_adjoint_kernels.f90
       call transfer_kernels_el_to_host(Mesh_pointer,rho_kl,mu_kl,kappa_kl,NSPEC_AB)
-
-      ! Multiply each kernel point with the local coefficient
-      do ispec = 1, nspec
-        if (ispec_is_elastic(ispec)) then
-          do j = 1, NGLLZ
-            do i = 1, NGLLX
-              iglob = ibool(i,j,ispec)
-              if (.not. assign_external_model) then
-                mul = poroelastcoef(2,1,kmato(ispec))
-                kappal = poroelastcoef(3,1,kmato(ispec)) - FOUR_THIRDS * mul
-                rhol = density(1,kmato(ispec))
-              else
-                rhol = rhoext(i,j,ispec)
-                mul = rhoext(i,j,ispec)*vsext(i,j,ispec)*vsext(i,j,ispec)
-                kappal = rhoext(i,j,ispec)*vpext(i,j,ispec)*vpext(i,j,ispec) - FOUR_THIRDS * mul
-              endif
-
-              rho_kl(i,j,ispec) = - rhol * rho_kl(i,j,ispec)
-              mu_kl(i,j,ispec) =  - TWO * mul * mu_kl(i,j,ispec)
-              kappa_kl(i,j,ispec) = - kappal * kappa_kl(i,j,ispec)
-            enddo
-          enddo
-        endif
-      enddo
     endif
   endif
 
-end subroutine it_transfer_from_GPU
+  end subroutine it_transfer_from_GPU
+
 
 !
 !----------------------------------------------------------------------------------------
 !
 
+  subroutine manage_no_backward_reconstruction_io()
 
-
-subroutine it_compute_integrated_energy_field_and_output()
-  ! compute int_0^t v^2 dt and write it on file if needed
-
-  use constants,only:CUSTOM_REAL,NGLLX,NGLLZ,IIN,MAX_STRING_LEN
-
-  use specfem_par,only: myrank,it,coord,nspec,ibool,integrated_cinetic_energy_field,max_cinetic_energy_field, &
-                        integrated_potential_energy_field,max_potential_energy_field,cinetic_effective_duration_field, &
-                        potential_effective_duration_field,NSTEP_BETWEEN_OUTPUT_SEISMOS,NSTEP
-                        !poroelastcoef,kmato,density,assign_external_model,vpext,ispec_is_acoustic ! TODO
+  use constants
+  use specfem_par
+  use specfem_par_gpu
 
   implicit none
 
-  ! local variables
-  integer :: ispec,iglob!,i,j
-  character(len=MAX_STRING_LEN)  :: filename
+  ! EB EB June 2018 : this routine is saving/reading the frames of the forward
+  ! wavefield that are necessary to compute the sensitivity kernels
 
-  !! Uncomment to write the velocity profile in acoustic part TODO
-  !real(kind=CUSTOM_REAL) :: cpl,kappal
-  !double precision :: rhol
-  !double precision :: lambdal_unrelaxed_elastic
-  !! TODO
+  ! safety check
+  if (.not. NO_BACKWARD_RECONSTRUCTION) return
 
-  ! computes maximum energy and integrated energy fields
-  call compute_energy_fields()
+  ! writes in frame for further adjoint/kernels calculation
+  if (SAVE_FORWARD) then
 
-  ! write integrated cinetic energy field in external file
+    if (mod(NSTEP-it+1,NTSTEP_BETWEEN_COMPUTE_KERNELS) == 0 .or. it == NSTEP ) then
 
-  write(filename,"('./OUTPUT_FILES/integrated_cinetic_energy_field',i5.5)") myrank
-  open(unit=IIN,file=trim(filename),status='unknown',action='write')
+      call save_forward_arrays_no_backward()
 
-  if (mod(it,NSTEP_BETWEEN_OUTPUT_SEISMOS) == 0 .or. it == NSTEP) then
-    ! loop over spectral elements
-    do ispec = 1,nspec
-      iglob = ibool(2,2,ispec)
-      write(IIN,*) real(coord(1,iglob),4), &
-                   real(coord(2,iglob),4),real(integrated_cinetic_energy_field(ispec),4)
-    enddo
-  endif
-  close(IIN)
+    endif
 
-  ! write max cinetic energy field in external file
+  endif ! SAVE_FORWARD
 
-  write(filename,"('./OUTPUT_FILES/max_cinetic_energy_field',i5.5)") myrank
-  open(unit=IIN,file=trim(filename),status='unknown',action='write')
+  if (SIMULATION_TYPE == 3) then
 
-  if (mod(it,NSTEP_BETWEEN_OUTPUT_SEISMOS) == 0 .or. it == NSTEP) then
-    ! loop over spectral elements
-    do ispec = 1,nspec
-      iglob = ibool(2,2,ispec)
-      write(IIN,*) real(coord(1,iglob),4), &
-                   real(coord(2,iglob),4),real(max_cinetic_energy_field(ispec),4)
-    enddo
-  endif
-  close(IIN)
+    if (mod(it,NTSTEP_BETWEEN_COMPUTE_KERNELS) == 0 .or. it == 1 .or. it == NSTEP) then
 
-  ! write integrated potential energy field in external file
+      call read_forward_arrays_no_backward()
 
-  write(filename,"('./OUTPUT_FILES/integrated_potential_energy_field',i5.5)") myrank
-  open(unit=IIN,file=trim(filename),status='unknown',action='write')
+      ! For the first iteration we need to add a transfer, to initiate the
+      ! transfer on the GPU
+      if (no_backward_iframe == 1) &
+        call read_forward_arrays_no_backward()
 
-  if (mod(it,NSTEP_BETWEEN_OUTPUT_SEISMOS) == 0 .or. it == NSTEP) then
-    ! loop over spectral elements
-    do ispec = 1,nspec
-      iglob = ibool(2,2,ispec)
-      write(IIN,*) real(coord(1,iglob),4), &
-                   real(coord(2,iglob),4),real(integrated_potential_energy_field(ispec),4)
-    enddo
-  endif
-  close(IIN)
+      ! If the wavefield is requested at it=1, then we enforce another transfer
+      if (no_backward_iframe == 2 .and. NTSTEP_BETWEEN_COMPUTE_KERNELS == 1) &
+        call read_forward_arrays_no_backward()
 
-  ! write max potential energy field in external file
+    endif
 
-  write(filename,"('./OUTPUT_FILES/max_potential_energy_field',i5.5)") myrank
-  open(unit=IIN,file=trim(filename),status='unknown',action='write')
+  endif ! SIMULATION == 3
 
-  if (mod(it,NSTEP_BETWEEN_OUTPUT_SEISMOS) == 0 .or. it == NSTEP) then
-    ! loop over spectral elements
-    do ispec = 1,nspec
-      iglob = ibool(2,2,ispec)
-      write(IIN,*) real(coord(1,iglob),4), &
-                   real(coord(2,iglob),4),real(max_potential_energy_field(ispec),4)
-    enddo
-  endif
-  close(IIN)
-
-  ! write potential effective duration field in external file
-
-  write(filename,"('./OUTPUT_FILES/potential_effective_duration_field',i5.5)") myrank
-  open(unit=IIN,file=trim(filename),status='unknown',action='write')
-
-  if (mod(it,NSTEP_BETWEEN_OUTPUT_SEISMOS) == 0 .or. it == NSTEP) then
-    ! loop over spectral elements
-    do ispec = 1,nspec
-      iglob = ibool(2,2,ispec)
-      write(IIN,*) real(coord(1,iglob),4), &
-                   real(coord(2,iglob),4),real(potential_effective_duration_field(ispec),4)
-    enddo
-  endif
-  close(IIN)
-
-  ! write cinetic effective duration field in external file
-
-  write(filename,"('./OUTPUT_FILES/cinetic_effective_duration_field',i5.5)") myrank
-  open(unit=IIN,file=trim(filename),status='unknown',action='write')
-
-  if (mod(it,NSTEP_BETWEEN_OUTPUT_SEISMOS) == 0 .or. it == NSTEP) then
-    ! loop over spectral elements
-    do ispec = 1,nspec
-      iglob = ibool(2,2,ispec)
-      write(IIN,*) real(coord(1,iglob),4), &
-                   real(coord(2,iglob),4),real(cinetic_effective_duration_field(ispec),4)
-    enddo
-  endif
-  close(IIN)
-
-  ! Uncomment to write the velocity profile in the acoustic part in file
-  !
-  !  write(filename,"('./OUTPUT_FILES/velocities',i5.5)") myrank
-  !  open(unit=IIN,file=trim(filename),status='unknown',action='write')
-  !
-  !  if (mod(it,NSTEP_BETWEEN_OUTPUT_SEISMOS) == 0 .or. it == NSTEP) then
-  !    ! loop over spectral elements
-  !    do ispec = 1,nspec
-  !      if (ispec_is_acoustic(ispec)) then
-  !        ! get density of current spectral element
-  !        lambdal_unrelaxed_elastic = poroelastcoef(1,1,kmato(ispec))
-  !        rhol  = density(1,kmato(ispec))
-  !        kappal = lambdal_unrelaxed_elastic
-  !        cpl = sqrt(kappal/rhol)
-  !
-  !        !--- if external medium, get density of current grid point
-  !        if (assign_external_model) then
-  !          cpl = vpext(2,2,ispec)
-  !        endif
-  !        iglob = ibool(2,2,ispec)
-  !        write(IIN,*) real(coord(2,iglob),4),cpl
-  !      endif
-  !    enddo
-  !  endif
-  !  close(IIN)
-
-end subroutine it_compute_integrated_energy_field_and_output
-
+  end subroutine  manage_no_backward_reconstruction_io

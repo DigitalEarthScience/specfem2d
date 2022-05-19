@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -31,10 +31,9 @@
 !
 !========================================================================
 
-
   subroutine parse_kernel_names(kernel_names_comma_delimited,kernel_names,nker)
 
-  use postprocess_par,only: MAX_STRING_LEN, MAX_KERNEL_NAMES
+  use postprocess_par, only: MAX_STRING_LEN, MAX_KERNEL_NAMES
 
   implicit none
 
@@ -70,7 +69,7 @@
     if (len_trim(kernel_names(iker)) == 0) then
       print *,'Error encountered kernel name with zero length: kernel name number ',iker,' out of ',nker,' is empty'
       print *,'Please check your kernel_names argument...'
-      stop 'Error kernel name with zero length'
+      call stop_the_code('Error kernel name with zero length')
     endif
   enddo
 
@@ -81,7 +80,7 @@
 !-------------------------------------------------------------------------------------------------
 !
 
-! The following utility function was modified from http://fortranwiki.org/fortran/show/strtok
+! The following utility function was modified from http://Fortranwiki.org/Fortran/show/strtok
 !
   subroutine strtok (source_string, delimiter, token)
 
@@ -104,7 +103,7 @@
 !     LIMITATIONS:
 !     can not be called with a different string until current string is totally processed, even from different procedures
 
-  use postprocess_par,only: MAX_STRING_LEN
+  use postprocess_par, only: MAX_STRING_LEN
 
   !     PARAMETERS:
   character(len=MAX_STRING_LEN), intent(in)  :: source_string
@@ -141,7 +140,7 @@
     endif
   enddo
 
-  if (ibegin > isource_len) then
+  if (ibegin >= isource_len) then
     token = char(0)
     return
   endif
@@ -150,7 +149,7 @@
   ifinish = ibegin
 
   do while (.true.)
-    if ((ifinish <= isource_len) .and.  (index(delimiter,saved_string(ifinish:ifinish)) == 0)) then
+    if ((ifinish < isource_len) .and. (index(delimiter,saved_string(ifinish:ifinish)) == 0)) then
       ! delimiter is not encountered yet, increases finish index
       ifinish = ifinish + 1
     else

@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -56,16 +56,14 @@
 ! some the subroutines, will be merged with src/tomography/xcombine_sem
 !
 
-
 program sum_kernels
 
-  use tomography_par,only: MAX_STRING_LEN,MAX_KERNEL_PATHS,KERNEL_FILE_LIST,IIN, &
-    myrank,sizeprocs, &
-    USE_ALPHA_BETA_RHO,USE_ISO_KERNELS
+  use tomography_par, only: MAX_STRING_LEN,MAX_KERNEL_PATHS,KERNEL_FILE_LIST,IIN, &
+                            myrank,sizeprocs,USE_ALPHA_BETA_RHO,USE_ISO_KERNELS
 
   implicit none
 
-  character(len=MAX_STRING_LEN) :: kernel_list(MAX_KERNEL_PATHS)
+  character(len=MAX_STRING_LEN),dimension(:),allocatable :: kernel_list
   character(len=MAX_STRING_LEN) :: sline, kernel_name
   integer :: nker
   integer :: ier
@@ -79,25 +77,30 @@ program sum_kernels
   call world_rank(myrank)
   NPROC = sizeprocs
 
-  if (myrank==0) then
+  if (myrank == 0) then
     write(*,*) 'sum_kernels:'
     write(*,*)
     write(*,*) 'reading kernel list: '
   endif
   call synchronize_all()
 
+  ! allocates array
+  allocate(kernel_list(MAX_KERNEL_PATHS),stat=ier)
+  if (ier /= 0) stop 'Error allocating kernel_list array'
+  kernel_list(:) = ''
+
   ! reads in event list
   nker=0
   open(unit = IIN, file = trim(KERNEL_FILE_LIST), status = 'old',iostat = ier)
   if (ier /= 0) then
      print *,'Error opening ',trim(KERNEL_FILE_LIST),myrank
-     stop 1
+     call stop_the_code("error 1")
   endif
   do while (1 == 1)
      read(IIN,'(a)',iostat=ier) sline
      if (ier /= 0) exit
      nker = nker+1
-     if (nker > MAX_KERNEL_PATHS) stop 'Error number of kernels exceeds MAX_KERNEL_PATHS'
+     if (nker > MAX_KERNEL_PATHS) call stop_the_code('Error number of kernels exceeds MAX_KERNEL_PATHS')
      kernel_list(nker) = sline
   enddo
   close(IIN)
@@ -109,15 +112,15 @@ program sum_kernels
   ! checks if number of MPI process as specified
   if (sizeprocs /= NPROC) then
     if (myrank == 0) then
-      print *,''
+      print *
       print *,'Error: run xsum_kernels with the same number of MPI processes '
       print *,'       as specified in Par_file by NPROC when slices were created'
-      print *,''
+      print *
       print *,'for example: mpirun -np ',NPROC,' ./xsum_kernels ...'
-      print *,''
+      print *
     endif
     call synchronize_all()
-    stop 'Error total number of slices'
+    call stop_the_code('Error total number of slices')
   endif
   call synchronize_all()
 
@@ -184,7 +187,7 @@ program sum_kernels
 
   endif
 
-  if (myrank==0) write(*,*) 'done writing all kernels, see directory OUTPUT_SUM/'
+  if (myrank == 0) write(*,*) 'done writing all kernels, see directory OUTPUT_SUM/'
 
   ! stop all the processes, and exit
   call finalize_mpi()
@@ -214,10 +217,10 @@ subroutine sum_kernel(kernel_name,kernel_list,nker)
   ! initializes arrays
   allocate(kernel(NGLLX,NGLLZ,NSPEC), &
            total_kernel(NGLLX,NGLLZ,NSPEC),stat=ier)
-  if (ier /= 0) stop 'Error allocating kernel arrays'
+  if (ier /= 0) call stop_the_code('Error allocating kernel arrays')
 
   if (USE_SOURCE_MASK) then
-    allocate( mask_source(NGLLX,NGLLZ,NSPEC) )
+    allocate(mask_source(NGLLX,NGLLZ,NSPEC))
     mask_source(:,:,:) = 1.0_CUSTOM_REAL
   endif
 
@@ -225,7 +228,7 @@ subroutine sum_kernel(kernel_name,kernel_list,nker)
   total_kernel = 0._CUSTOM_REAL
   do iker = 1, nker
     ! user output
-    if (myrank==0) then
+    if (myrank == 0) then
       write(*,*) 'reading in event kernel for: ',trim(kernel_name)
       write(*,*) '    ',iker, ' out of ', nker
     endif
@@ -238,7 +241,7 @@ subroutine sum_kernel(kernel_name,kernel_list,nker)
     open(IIN,file=trim(k_file),status='old',form='unformatted',action='read',iostat=ier)
     if (ier /= 0) then
       write(*,*) '  kernel not found: ',trim(k_file)
-      stop 'Error kernel file not found'
+      call stop_the_code('Error kernel file not found')
     endif
     read(IIN) kernel
     close(IIN)
@@ -259,7 +262,7 @@ subroutine sum_kernel(kernel_name,kernel_list,nker)
       open(IIN,file=trim(k_file),status='old',form='unformatted',action='read',iostat=ier)
       if (ier /= 0) then
         write(*,*) '  file not found: ',trim(k_file)
-        stop 'Error source mask file not found'
+        call stop_the_code('Error source mask file not found')
       endif
       read(IIN) mask_source
       close(IIN)
@@ -273,7 +276,7 @@ subroutine sum_kernel(kernel_name,kernel_list,nker)
   enddo
 
   ! stores summed kernels
-  if (myrank==0) write(*,*) 'writing out summed kernel for: ',trim(kernel_name)
+  if (myrank == 0) write(*,*) 'writing out summed kernel for: ',trim(kernel_name)
 
   write(k_file,'(a,i6.6,a)') 'OUTPUT_SUM/proc',myrank,trim(REG)//trim(kernel_name)//'.bin'
 
@@ -281,12 +284,12 @@ subroutine sum_kernel(kernel_name,kernel_list,nker)
   if (ier /= 0) then
     write(*,*) 'Error kernel not written: ',trim(k_file)
     write(*,*) 'Please check if directory OUTPUT_SUM/ exists...'
-    stop 'Error kernel write'
+    call stop_the_code('Error kernel write')
   endif
   write(IOUT) total_kernel
   close(IOUT)
 
-  if (myrank==0) write(*,*)
+  if (myrank == 0) write(*,*)
 
   ! frees memory
   deallocate(kernel,total_kernel)

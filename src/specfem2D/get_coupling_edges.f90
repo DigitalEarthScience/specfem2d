@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -35,7 +35,7 @@
 
 ! handles all domain coupling
 
-  use constants,only: IMAIN,IBOTTOM,IRIGHT,ITOP,ILEFT,TINYVAL
+  use constants, only: IMAIN,IBOTTOM,IRIGHT,ITOP,ILEFT,TINYVAL
   use specfem_par
 
   implicit none
@@ -194,6 +194,10 @@
   ! the common nodes forming the edge are computed here
   if (coupled_acoustic_poro) then
 
+    ! checks
+    if (ATTENUATION_VISCOACOUSTIC .or. ATTENUATION_PORO_FLUID_PART) &
+      call stop_the_code('Attenuation not supported for mixed acoustic/poroelastic simulations')
+
     ! user output
     if (myrank == 0) then
       write(IMAIN,*)
@@ -334,10 +338,11 @@
   if (coupled_elastic_poro) then
 
     ! checks
-    if (ATTENUATION_VISCOELASTIC_SOLID .or. ATTENUATION_PORO_FLUID_PART) &
-      stop 'Attenuation not supported for mixed elastic/poroelastic simulations'
-    if (time_stepping_scheme == 2.or. time_stepping_scheme == 3) &
-      stop 'RK and LDDRK time scheme not supported for mixed elastic/poroelastic simulations'
+    if (ATTENUATION_VISCOELASTIC .or. ATTENUATION_PORO_FLUID_PART) &
+      call stop_the_code('Attenuation not supported for mixed elastic/poroelastic simulations')
+
+    if (time_stepping_scheme /= 1) &
+      call stop_the_code('Time scheme not supported for mixed elastic/poroelastic simulations')
 
     if (myrank == 0) then
       write(IMAIN,*)
@@ -482,7 +487,7 @@
       call flush_IMAIN()
     endif
     ! excludes common points in acoustic domain
-    call get_coupling_edges_exclude_common_points(nelemabs,numabs,num_fluid_solid_edges, &
+    call get_coupling_edges_exclude_common_points(num_abs_boundary_faces,abs_boundary_ispec,num_fluid_solid_edges, &
                                                   fluid_solid_acoustic_ispec,fluid_solid_acoustic_iedge, &
                                                   ibegin_edge1,ibegin_edge2,ibegin_edge3,ibegin_edge4, &
                                                   iend_edge1,iend_edge2,iend_edge3,iend_edge4)
@@ -497,7 +502,7 @@
       call flush_IMAIN()
     endif
     ! excludes common points in acoustic domain
-    call get_coupling_edges_exclude_common_points(nelemabs,numabs,num_fluid_poro_edges, &
+    call get_coupling_edges_exclude_common_points(num_abs_boundary_faces,abs_boundary_ispec,num_fluid_poro_edges, &
                                                   fluid_poro_acoustic_ispec,fluid_poro_acoustic_iedge, &
                                                   ibegin_edge1,ibegin_edge2,ibegin_edge3,ibegin_edge4, &
                                                   iend_edge1,iend_edge2,iend_edge3,iend_edge4)
@@ -512,7 +517,7 @@
       call flush_IMAIN()
     endif
     ! excludes common points in poroelastic domain
-    call get_coupling_edges_exclude_common_points(nelemabs,numabs,num_solid_poro_edges, &
+    call get_coupling_edges_exclude_common_points(num_abs_boundary_faces,abs_boundary_ispec,num_solid_poro_edges, &
                                                   solid_poro_poroelastic_ispec,solid_poro_poroelastic_iedge, &
                                                   ibegin_edge1_poro,ibegin_edge2_poro,ibegin_edge3_poro,ibegin_edge4_poro, &
                                                   iend_edge1_poro,iend_edge2_poro,iend_edge3_poro,iend_edge4_poro)
@@ -524,34 +529,34 @@
 !-------------------------------------------------------------------------------
 !
 
-  subroutine get_coupling_edges_exclude_common_points(nelemabs,numabs,num_domain_edges, &
+  subroutine get_coupling_edges_exclude_common_points(num_abs_boundary_faces,abs_boundary_ispec,num_domain_edges, &
                                                       domain_ispec,domain_iedge, &
                                                       ibegin_edge1,ibegin_edge2,ibegin_edge3,ibegin_edge4, &
                                                       iend_edge1,iend_edge2,iend_edge3,iend_edge4)
 
 ! excludes common GLL points (in one of the domains) between coupling domains to correct absorbing boundary
 
-  use constants,only: IBOTTOM,ITOP,ILEFT,IRIGHT,NGLLX,NGLLZ
+  use constants, only: IBOTTOM,ITOP,ILEFT,IRIGHT,NGLLX,NGLLZ
 
   implicit none
 
-  integer,intent(in) :: nelemabs
-  integer,dimension(nelemabs),intent(in) ::numabs
+  integer,intent(in) :: num_abs_boundary_faces
+  integer,dimension(num_abs_boundary_faces),intent(in) :: abs_boundary_ispec
 
   integer,intent(in) :: num_domain_edges
   integer,dimension(num_domain_edges),intent(in) :: domain_ispec,domain_iedge
 
-  integer,dimension(nelemabs),intent(inout) :: ibegin_edge1,ibegin_edge2,ibegin_edge3,ibegin_edge4
-  integer,dimension(nelemabs),intent(inout) :: iend_edge1,iend_edge2,iend_edge3,iend_edge4
+  integer,dimension(num_abs_boundary_faces),intent(inout) :: ibegin_edge1,ibegin_edge2,ibegin_edge3,ibegin_edge4
+  integer,dimension(num_abs_boundary_faces),intent(inout) :: iend_edge1,iend_edge2,iend_edge3,iend_edge4
 
   ! local parameters
   integer :: ispec,ispecabs,inum
   integer :: ispec_domain,iedge_domain
 
   ! loop on all the absorbing elements
-  do ispecabs = 1,nelemabs
+  do ispecabs = 1,num_abs_boundary_faces
 
-    ispec = numabs(ispecabs)
+    ispec = abs_boundary_ispec(ispecabs)
 
     ! loop on all the coupling edges
     do inum = 1,num_domain_edges

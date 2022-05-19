@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -41,18 +41,18 @@
 ! Determines the points that are on the interfaces with other partitions, to help
 ! build the communication buffers, and determines which elements are considered 'inner'
 ! (no points in common with other partitions) and 'outer' (at least one point in common
-! with neighbouring partitions).
+! with neighboring partitions).
 ! We have both acoustic and (poro)elastic buffers, for coupling between acoustic and (poro)elastic elements
 ! led us to have two sets of communications.
 !-----------------------------------------------
   subroutine prepare_assemble_MPI()
 
-  use constants,only: NGLLX,NGLLZ
+  use constants, only: NGLLX,NGLLZ
 
-  use specfem_par, only: ibool, knods, ngnod, nglob, &
-    ispec_is_elastic, ispec_is_poroelastic, ispec_is_acoustic, ispec_is_gravitoacoustic
+  use specfem_par, only: ibool, knods, NGNOD, nglob, &
+    ispec_is_elastic, ispec_is_poroelastic, ispec_is_acoustic
 
-  use specfem_par, only: ninterface, my_nelmnts_neighbours, my_interfaces, &
+  use specfem_par, only: ninterface, my_nelmnts_neighbors, my_interfaces, &
     nibool_interfaces_ext_mesh, ibool_interfaces_ext_mesh_init
 
   use specfem_par, only: NPROC, &
@@ -76,7 +76,7 @@
   logical, dimension(nglob)  :: mask_ibool_ext_mesh
 
   integer  :: ixmin, ixmax, izmin, izmax, ix, iz
-  integer, dimension(ngnod)  :: n
+  integer, dimension(NGNOD)  :: n
   integer  :: e1, e2, itype, ispec, k, sens, iglob
   integer  :: nglob_interface_acoustic
   integer  :: nglob_interface_elastic
@@ -114,7 +114,7 @@
     mask_ibool_elastic(:) = .false.
     mask_ibool_poroelastic(:) = .false.
 
-    do ispec_interface = 1, my_nelmnts_neighbours(iinterface)
+    do ispec_interface = 1, my_nelmnts_neighbors(iinterface)
       ! element id
       ispec = my_interfaces(1,ispec_interface,iinterface)
 
@@ -122,7 +122,7 @@
       itype = my_interfaces(2,ispec_interface,iinterface)
 
       ! element control node ids
-      do k = 1, ngnod
+      do k = 1, NGNOD
         n(k) = knods(k,ispec)
       enddo
 
@@ -130,7 +130,7 @@
       e1 = my_interfaces(3,ispec_interface,iinterface)
       e2 = my_interfaces(4,ispec_interface,iinterface)
 
-      call get_edge(ngnod, n, itype, e1, e2, ixmin, ixmax, izmin, izmax, sens)
+      call get_edge(NGNOD, n, itype, e1, e2, ixmin, ixmax, izmin, izmax, sens)
 
       ! sets interface points (all material domains)
       do iz = izmin, izmax, sens
@@ -179,12 +179,8 @@
               ibool_interfaces_acoustic(nglob_interface_acoustic,iinterface) = iglob
             endif
 
-          else if (ispec_is_gravitoacoustic(iglob)) then
-            ! gravitoacoustic element
-            stop 'Preparing assembly points with MPI not implemented yet for gravitoacoustic domains'
-
           else
-            stop 'Invalid element type found in prepare_assemble_MPI() routine'
+            call stop_the_code('Invalid element type found in prepare_assemble_MPI() routine')
           endif
 
         enddo
@@ -233,14 +229,14 @@
 ! Get the points (ixmin, ixmax, izmin and izmax) on an node/edge for one element.
 ! 'sens' is used to have DO loops with increment equal to 'sens' (-/+1).
 !-----------------------------------------------
-  subroutine get_edge ( ngnod, n, itype, e1, e2, ixmin, ixmax, izmin, izmax, sens )
+  subroutine get_edge ( NGNOD, n, itype, e1, e2, ixmin, ixmax, izmin, izmax, sens )
 
-  use constants,only: NGLLX,NGLLZ
+  use constants, only: NGLLX,NGLLZ
 
   implicit none
 
-  integer, intent(in)  :: ngnod
-  integer, dimension(ngnod), intent(in)  :: n
+  integer, intent(in)  :: NGNOD
+  integer, dimension(NGNOD), intent(in)  :: n
   integer, intent(in)  :: itype, e1, e2
   integer, intent(out)  :: ixmin, ixmax, izmin, izmax
   integer, intent(out)  :: sens
@@ -281,7 +277,7 @@
     ! common edge
 
     ! checks which edge and corner points are given
-    if (e1 ==  n(1)) then
+    if (e1 == n(1)) then
         ixmin = 1
         izmin = 1
         if (e2 == n(2)) then
@@ -340,7 +336,7 @@
 
   else
 
-    stop 'ERROR get_edge unknown type'
+    call stop_the_code('ERROR get_edge unknown type')
 
   endif
 

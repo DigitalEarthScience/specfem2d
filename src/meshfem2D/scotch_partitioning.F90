@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -31,15 +31,15 @@
 !
 !========================================================================
 
-
 ! Partitioning using SCOTCH
 
   subroutine scotch_partitioning()
 
 #ifdef USE_SCOTCH
-  use part_unstruct_par,only: nb_edges,part,nelmnts,xadj_g,adjncy_g,adjwgt,vwgt
+  use part_unstruct_par, only: nb_edges,part,nelmnts,xadj_g,adjncy_g
+  use compute_elements_load_par, only: elmnts_load,adjwgt
 
-  use shared_parameters,only: nparts => NPROC
+  use shared_parameters, only: nparts => NPROC
 #endif
 
   implicit none
@@ -76,9 +76,9 @@
   ! we use the default strategy for partitioning
   ! thus no need to define an explicit strategy
   call scotchfstratinit (SCOTCHSTRAT(1), ier)
-   IF (ier /= 0) THEN
+   if (ier /= 0) then
      print *, 'ERROR : MAIN : Cannot initialize strategy'
-     stop 'Error scotch init'
+     call stop_the_code('Error scotch init')
   endif
 
   ! resets SCOTCH random number generator to produce deterministic partitions
@@ -86,9 +86,9 @@
 
   ! initializes graph
   call scotchfgraphinit (SCOTCHGRAPH (1), ier)
-  IF (ier /= 0) THEN
+  if (ier /= 0) then
      print *, 'ERROR : MAIN : Cannot initialize graph'
-     stop 'Error scotch graph'
+     call stop_the_code('Error scotch graph')
   endif
 
   ! fills graph structure : see user manual (scotch_user5.1.pdf, page 72/73)
@@ -99,43 +99,43 @@
   !                    #(9) arc_load_array (optional)      #(10) ierror
   call scotchfgraphbuild (SCOTCHGRAPH (1), 0, nelmnts, &
                           xadj_g(0), xadj_g(0), &
-                          vwgt(0), xadj_g(0), &
+                          elmnts_load(0), xadj_g(0), &
                           nb_edges, &
                           adjncy_g(0), adjwgt (0), ier)
-  IF (ier /= 0) THEN
+  if (ier /= 0) then
      print *, 'ERROR : MAIN : Cannot build graph'
-     stop 'Error scotch graphbuild'
+     call stop_the_code('Error scotch graphbuild')
   endif
 
   call scotchfgraphcheck (SCOTCHGRAPH (1), ier)
-  IF (ier /= 0) THEN
+  if (ier /= 0) then
      print *, 'ERROR : MAIN : Invalid check'
-     stop 'Error scotch graphcheck'
+     call stop_the_code('Error scotch graphcheck')
   endif
 
   call scotchfgraphpart (SCOTCHGRAPH (1), nparts, SCOTCHSTRAT(1), part(0), ier)
-  IF (ier /= 0) THEN
+  if (ier /= 0) then
      print *, 'ERROR : MAIN : Cannot part graph'
-     stop 'Error scotch graphpart'
+     call stop_the_code('Error scotch graphpart')
   endif
 
   call SCOTCHFGRAPHEXIT (SCOTCHGRAPH (1), ier)
-  IF (ier /= 0) THEN
+  if (ier /= 0) then
      print *, 'ERROR : MAIN : Cannot destroy graph'
-     stop 'Error scotch graphexit'
+     call stop_the_code('Error scotch graphexit')
   endif
 
   call scotchfstratexit (SCOTCHSTRAT(1), ier)
-  IF (ier /= 0) THEN
+  if (ier /= 0) then
      print *, 'ERROR : MAIN : Cannot destroy strat'
-     stop 'Error scotch exit'
+     call stop_the_code('Error scotch exit')
   endif
 
 #else
   ! safety stop
   print *, 'This version of SPECFEM was not compiled with support of SCOTCH.'
   print *, 'Please recompile with -DUSE_SCOTCH in order to enable use of SCOTCH.'
-  stop 'Error SCOTCH partitioning not compiled'
+  call stop_the_code('Error SCOTCH partitioning not compiled')
 #endif
 
   end subroutine scotch_partitioning

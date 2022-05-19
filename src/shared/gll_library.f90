@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -158,16 +158,16 @@
   gammaf = one
 
   if (x == -half) gammaf = -two*dsqrt(pi)
-  if (x ==  half) gammaf =  dsqrt(pi)
-  if (x ==  one) gammaf =  one
-  if (x ==  two) gammaf =  one
-  if (x ==  1.5d0) gammaf =  dsqrt(pi)/2.d0
-  if (x ==  2.5d0) gammaf =  1.5d0*dsqrt(pi)/2.d0
-  if (x ==  3.5d0) gammaf =  2.5d0*1.5d0*dsqrt(pi)/2.d0
-  if (x ==  3.d0 ) gammaf =  2.d0
-  if (x ==  4.d0 ) gammaf = 6.d0
-  if (x ==  5.d0 ) gammaf = 24.d0
-  if (x ==  6.d0 ) gammaf = 120.d0
+  if (x == half) gammaf =  dsqrt(pi)
+  if (x == one) gammaf =  one
+  if (x == two) gammaf =  one
+  if (x == 1.5d0) gammaf =  dsqrt(pi)/2.d0
+  if (x == 2.5d0) gammaf =  1.5d0*dsqrt(pi)/2.d0
+  if (x == 3.5d0) gammaf =  2.5d0*1.5d0*dsqrt(pi)/2.d0
+  if (x == 3.d0 ) gammaf =  2.d0
+  if (x == 4.d0 ) gammaf = 6.d0
+  if (x == 5.d0 ) gammaf = 24.d0
+  if (x == 6.d0 ) gammaf = 120.d0
 
   end function gammaf
 
@@ -237,7 +237,7 @@
     enddo
 
     ! checks bounds
-    if (np-j+1 < 1 .or. np-j+1 > np) stop 'error np-j+1-index in jacg'
+    if (np-j+1 < 1 .or. np-j+1 > np) call stop_the_code('error np-j+1-index in jacg')
 
     xjac(np-j+1) = x
     xlast        = x
@@ -263,7 +263,7 @@
     enddo
 
     ! checks bounds
-    if (jmin < 1 .or. jmin > np) stop 'error j-index in jacg'
+    if (jmin < 1 .or. jmin > np) call stop_the_code('error j-index in jacg')
 
     if (jmin /= i) then
       swap = xjac(i)
@@ -337,7 +337,7 @@
 !------------------------------------------------------------------------
 !
 
-  double precision FUNCTION PNDLEG (Z,N)
+  double precision function PNDLEG (Z,N)
 
 !------------------------------------------------------------------------
 !
@@ -350,7 +350,7 @@
   double precision z
   integer n
 
-  double precision P1,P2,P1D,P2D,P3D,FK,P3
+  double precision P1,P2,P1D,P2D,P3D,DBLE_K,P3
   integer k
 
   P1   = 1.d0
@@ -360,9 +360,9 @@
   P3D  = 1.d0
 
   do K = 1, N-1
-    FK  = dble(K)
-    P3  = ((2.d0*FK+1.d0)*Z*P2 - FK*P1)/(FK+1.d0)
-    P3D = ((2.d0*FK+1.d0)*P2 + (2.d0*FK+1.d0)*Z*P2D - FK*P1D) / (FK+1.d0)
+    DBLE_K  = dble(K)
+    P3  = ((2.d0*DBLE_K+1.d0)*Z*P2 - DBLE_K*P1)/(DBLE_K+1.d0)
+    P3D = ((2.d0*DBLE_K+1.d0)*P2 + (2.d0*DBLE_K+1.d0)*Z*P2D - DBLE_K*P1D) / (DBLE_K+1.d0)
     P1  = P2
     P2  = P3
     P1D = P2D
@@ -377,7 +377,7 @@
 !------------------------------------------------------------------------
 !
 
-  double precision FUNCTION PNLEG (Z,N)
+  double precision function PNLEG (Z,N)
 
 !------------------------------------------------------------------------
 !
@@ -390,7 +390,7 @@
   double precision z
   integer n
 
-  double precision P1,P2,P3,FK
+  double precision P1,P2,P3,DBLE_K
   integer k
 
   P1   = 1.d0
@@ -398,8 +398,8 @@
   P3   = P2
 
   do K = 1, N-1
-    FK  = dble(K)
-    P3  = ((2.d0*FK+1.d0)*Z*P2 - FK*P1)/(FK+1.d0)
+    DBLE_K  = dble(K)
+    P3  = ((2.d0*DBLE_K+1.d0)*Z*P2 - DBLE_K*P1)/(DBLE_K+1.d0)
     P1  = P2
     P2  = P3
   enddo
@@ -490,9 +490,9 @@
   p    = zero
   pdm1 = zero
 
-  if (np <= 0) stop 'minimum number of Gauss points is 1'
+  if (np <= 0) call stop_the_code('minimum number of Gauss points is 1')
 
-  if ((alpha <= -one) .or. (beta <= -one)) stop 'alpha and beta must be greater than -1'
+  if ((alpha <= -one) .or. (beta <= -one)) call stop_the_code('alpha and beta must be greater than -1')
 
   if (np == 1) then
     z(1) = (beta-alpha)/(apb+two)
@@ -560,12 +560,12 @@
   nm1 = n-1
   pd  = zero
 
-  if (np <= 1) stop 'minimum number of Gauss-Lobatto points is 2'
+  if (np <= 1) call stop_the_code('minimum number of Gauss-Lobatto points is 2')
 
 ! with spectral elements, use at least 3 points
-  if (np <= 2) stop 'minimum number of Gauss-Lobatto points for the SEM is 3'
+  if (np <= 2) call stop_the_code('minimum number of Gauss-Lobatto points for the SEM is 3')
 
-  if ((alpha <= -one) .or. (beta <= -one)) stop 'alpha and beta must be greater than -1'
+  if ((alpha <= -one) .or. (beta <= -one)) call stop_the_code('alpha and beta must be greater than -1')
 
   if (nm1 > 0) then
     alpg  = alpha+one
@@ -580,12 +580,8 @@
 ! note: Jacobi polynomials with (alpha,beta) equal to zero become Legendre polynomials.
 !       for Legendre polynomials, if number of points is odd, the middle abscissa is exactly zero
   if (abs(alpha) < tol_zero .and. abs(beta) < tol_zero) then
-    if (mod(np,2) /= 0) then
-      !print *,'zwgljd debug ',np, z((np-1)/2+1),'zero middle abscissa case'
-      z((np-1)/2+1) = zero
-    endif
+    if (mod(np,2) /= 0) z((np-1)/2+1) = zero
   endif
-
 
 ! weights
   do i=2,np-1

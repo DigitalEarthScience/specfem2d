@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -35,11 +35,12 @@
                                 xinterface_top,zinterface_top,coefs_interface_top, &
                                 npoints_interface_top,max_npoints_interface)
 
-  use constants,only: IOUT,IMAIN
+  use constants, only: IOUT,IMAIN,MAX_STRING_LEN,mygroup,IN_DATA_FILES
+  use shared_parameters, only: NUMBER_OF_SIMULTANEOUS_RUNS
 
   implicit none
 
-  integer :: nreceiversets
+  integer,intent(in) :: nreceiversets
   integer, dimension(nreceiversets) :: nrec_line
   double precision, dimension(nreceiversets) :: xdeb,zdeb,xfin,zfin
   logical, dimension(nreceiversets) :: record_at_surface_same_vertical
@@ -54,10 +55,18 @@
   integer :: nrec_total
   double precision :: xrec,zrec
   double precision, external :: value_spline
+  character(len=MAX_STRING_LEN) :: stations_filename,path_to_add
+
+  stations_filename = trim(IN_DATA_FILES)//'STATIONS'
+
+  if (NUMBER_OF_SIMULTANEOUS_RUNS > 1 .and. mygroup >= 0) then
+    write(path_to_add,"('run',i4.4,'/')") mygroup + 1
+    stations_filename = path_to_add(1:len_trim(path_to_add))//stations_filename(1:len_trim(stations_filename))
+  endif
 
   ! user output
   write(IMAIN,*)
-  write(IMAIN,*) 'writing the DATA/STATIONS file'
+  write(IMAIN,*) 'writing the '//trim(stations_filename)//' file'
   write(IMAIN,*)
 
   ! total number of receivers in all the receiver lines
@@ -69,9 +78,10 @@
   write(IMAIN,*)
   write(IMAIN,*) 'Target positions (x,z) of the ',nrec_total,' receivers'
   write(IMAIN,*)
+  call flush_IMAIN()
 
-  open(unit=IOUT,file='DATA/STATIONS',status='unknown',iostat=ios)
-  if (ios /= 0 ) stop 'error saving STATIONS file'
+  open(unit=IOUT,file=trim(stations_filename),status='unknown',iostat=ios)
+  if (ios /= 0 ) call stop_the_code('error saving STATIONS file')
 
   irec_global_number = 0
 

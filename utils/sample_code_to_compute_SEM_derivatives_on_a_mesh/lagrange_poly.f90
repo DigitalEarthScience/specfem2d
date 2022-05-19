@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -52,7 +52,7 @@
 
   EPS = 1.d-5
   DZ = Z - ZGLL(I)
-  if(abs(DZ) < EPS) then
+  if (abs(DZ) < EPS) then
    HGLL = 1.d0
    return
   endif
@@ -84,7 +84,7 @@
   prod1 = 1.0d0
   prod2 = 1.0d0
   do i=1,NGLL
-    if(i /= dgr) then
+    if (i /= dgr) then
       prod1 = prod1*(xi-xigll(i))
       prod2 = prod2*(xigll(dgr)-xigll(i))
     endif
@@ -93,10 +93,10 @@
 
   hprime(dgr)=0.0d0
   do i=1,NGLL
-    if(i /= dgr) then
+    if (i /= dgr) then
       prod1=1.0d0
       do j=1,NGLL
-        if(j /= dgr .and. j /= i) prod1 = prod1*(xi-xigll(j))
+        if (j /= dgr .and. j /= i) prod1 = prod1*(xi-xigll(j))
       enddo
       hprime(dgr) = hprime(dgr)+prod1
     endif

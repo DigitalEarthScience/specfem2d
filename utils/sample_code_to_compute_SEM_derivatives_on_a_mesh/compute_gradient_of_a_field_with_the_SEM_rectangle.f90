@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -227,10 +227,10 @@
     enddo
   enddo
 
-  if(ispec /= NSPEC) stop 'the total number of spectral elements created is not correct'
+  if (ispec /= NSPEC) stop 'the total number of spectral elements created is not correct'
 
 ! check that the numbering created is correct
-  if(minval(ibool) /= 1 .or. maxval(ibool) /= NGLOB) stop 'the grid numbering created is not correct'
+  if (minval(ibool) /= 1 .or. maxval(ibool) /= NGLOB) stop 'the grid numbering created is not correct'
 
 ! print *,'x of anchor points min, max = ',minval(coord_of_anchor_points(1,:,:)),maxval(coord_of_anchor_points(1,:,:))
 ! print *,'z of anchor points min, max = ',minval(coord_of_anchor_points(2,:,:)),maxval(coord_of_anchor_points(2,:,:))
@@ -248,7 +248,7 @@
 
           ! compute the Jacobian matrix and the physical coordinates of this mesh point
           call recompute_jacobian(xi,gamma,x,z,xixl,xizl,gammaxl,gammazl,jacobianl, &
-                    coord_of_anchor_points,ispec,nspec)
+                                  coord_of_anchor_points,ispec,nspec)
 
           coord(1,ibool(i,j,ispec)) = x
           coord(2,ibool(i,j,ispec)) = z
@@ -356,7 +356,7 @@
            dist = sqrt((x_receiver-dble(coord(1,iglob)))**2 + (z_receiver-dble(coord(2,iglob)))**2)
 
 !          keep this point if it is closer to the receiver
-           if(dist < distmin) then
+           if (dist < distmin) then
               distmin = dist
               ispec_selected_receiver = ispec
               ix_initial_guess = i
@@ -380,7 +380,7 @@
 
 ! recompute jacobian for the new point
     call recompute_jacobian(xi,gamma,x,z,xixl,xizl,gammaxl,gammazl,jacobianl, &
-                    coord_of_anchor_points,ispec_selected_receiver,nspec)
+                            coord_of_anchor_points,ispec_selected_receiver,nspec)
 
 ! compute distance to target location
     dx = - (x - x_receiver)
@@ -409,7 +409,7 @@
 
 ! compute final coordinates of point found
     call recompute_jacobian(xi,gamma,x,z,xixl,xizl,gammaxl,gammazl,jacobianl, &
-                    coord_of_anchor_points,ispec_selected_receiver,nspec)
+                            coord_of_anchor_points,ispec_selected_receiver,nspec)
 
 ! store xi,gamma of point found
   xi_receiver = xi
@@ -421,7 +421,7 @@
   print *
   print *,'Location of the receiver:'
 
-  if(final_distance == HUGEVAL) stop 'error locating the receiver'
+  if (final_distance == HUGEVAL) stop 'error locating the receiver'
 
   print *,'            original x: ',sngl(x_receiver)
   print *,'            original z: ',sngl(z_receiver)

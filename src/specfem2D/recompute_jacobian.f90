@@ -4,10 +4,10 @@
 !                   --------------------------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This software is a computer program whose purpose is to solve
 ! the two-dimensional viscoelastic anisotropic or poroelastic wave equation
@@ -15,7 +15,7 @@
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
-! the Free Software Foundation; either version 2 of the License, or
+! the Free Software Foundation; either version 3 of the License, or
 ! (at your option) any later version.
 !
 ! This program is distributed in the hope that it will be useful,
@@ -31,32 +31,36 @@
 !
 !========================================================================
 
-! Recompute 2D jacobian at a given point in a 4-node or 9-node element
-! Compute also the global coordinates of the point defined by: (xi,gamma,ispec)
+! Recompute 2D jacobian at a given point in a 4-node or 9-node element.
+! Compute also the global coordinates of the point defined by: (xi,gamma,ispec).
 
-  subroutine recompute_jacobian(xi,gamma,x,z,xix,xiz,gammax,gammaz,jacobian,coorg,knods,ispec,ngnod,nspec,npgeo, &
-                      stop_if_negative_jacobian)
+  subroutine recompute_jacobian_with_negative_stop(xi,gamma,x,z,xix,xiz,gammax,gammaz,jacobian, &
+                                                   coorg,knods,ispec,NGNOD,nspec,npgeo, &
+                                                   stop_if_negative_jacobian)
 
-  use constants,only: NDIM,ZERO
+  use constants, only: NDIM,ZERO
 
   implicit none
 
-  integer ispec,ngnod,nspec,npgeo
-  double precision x,z,xix,xiz,gammax,gammaz
-  double precision xi,gamma,jacobian
+  integer,intent(in) :: ispec,NGNOD,nspec,npgeo
+  double precision, intent(in) :: xi,gamma
+  double precision, intent(out) :: x,z
+  double precision, intent(out) :: xix,xiz,gammax,gammaz
+  double precision, intent(out) :: jacobian
 
-  integer knods(ngnod,nspec)
-  double precision coorg(NDIM,npgeo)
+  integer, intent(in) :: knods(NGNOD,nspec)
+  double precision, intent(in) :: coorg(NDIM,npgeo)
 
+  logical, intent(in) :: stop_if_negative_jacobian
+
+  ! local parameters
 ! 2D shape functions and their derivatives at receiver
-  double precision shape2D(ngnod)
-  double precision dershape2D(NDIM,ngnod)
+  double precision :: shape2D(NGNOD)
+  double precision :: dershape2D(NDIM,NGNOD)
 
-  double precision xxi,zxi,xgamma,zgamma,xelm,zelm
+  double precision :: xxi,zxi,xgamma,zgamma,xelm,zelm
 
-  integer ia,nnum
-
-  logical stop_if_negative_jacobian
+  integer :: ia,nnum
 
 ! only one problematic element is output to OpenDX for now in case of elements with a negative Jacobian
   integer, parameter :: ntotspecAVS_DX = 1
@@ -64,7 +68,7 @@
 ! recompute jacobian for any (xi,gamma) point, not necessarily a GLL point
 
 ! create the 2D shape functions and then the Jacobian
-  call define_shape_functions(shape2D,dershape2D,xi,gamma,ngnod)
+  call define_shape_functions(shape2D,dershape2D,xi,gamma,NGNOD)
 
 ! compute coordinates and jacobian matrix
   x = ZERO
@@ -75,7 +79,7 @@
   xgamma = ZERO
   zgamma = ZERO
 
-  do ia = 1,ngnod
+  do ia = 1,NGNOD
 
     nnum = knods(ia,ispec)
 
@@ -101,8 +105,8 @@
 
 ! print the coordinates of the mesh points of this element
     print *, 'ispec = ', ispec
-    print *, 'ngnod = ', ngnod
-    do ia = 1,ngnod
+    print *, 'NGNOD = ', NGNOD
+    do ia = 1,NGNOD
       nnum = knods(ia,ispec)
       xelm = coorg(1,nnum)
       zelm = coorg(2,nnum)
@@ -113,8 +117,8 @@
     open(unit=11,file='DX_first_element_with_negative_jacobian.dx',status='unknown')
 
 ! output the points (the mesh is flat therefore the third coordinate is zero)
-    write(11,*) 'object 1 class array type float rank 1 shape 3 items ',ngnod,' data follows'
-    do ia = 1,ngnod
+    write(11,*) 'object 1 class array type float rank 1 shape 3 items ',NGNOD,' data follows'
+    do ia = 1,NGNOD
       nnum = knods(ia,ispec)
       xelm = coorg(1,nnum)
       zelm = coorg(2,nnum)
@@ -145,7 +149,7 @@
 ! close OpenDX file
     close(11)
 
-    stop 'negative 2D Jacobian, element saved in DX_first_element_with_negative_jacobian.dx'
+    call stop_the_code('negative 2D Jacobian, element saved in DX_first_element_with_negative_jacobian.dx')
   endif
 
 ! invert the relation
@@ -154,5 +158,5 @@
   xiz = - xgamma / jacobian
   gammaz = xxi / jacobian
 
-  end subroutine recompute_jacobian
+  end subroutine recompute_jacobian_with_negative_stop
 
