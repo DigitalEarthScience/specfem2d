@@ -36,18 +36,26 @@
   subroutine compute_add_sources_acoustic(potential_dot_dot_acoustic,it,i_stage)
 
   use constants, only: CUSTOM_REAL,NGLLX,NGLLZ,myrank
+  use constants, only: C_LDDRK,C_RK4,ALPHA_SYMPLECTIC
 
   use specfem_par, only: ispec_is_acoustic,nglob_acoustic, &
                          NSOURCES,source_type,source_time_function,sourcearrays, &
                          islice_selected_source,ispec_selected_source,ibool,kappastore
+  use specfem_par, only: NSTEP, NSOURCES, source_time_function, &
+                         time_function_type, name_of_source_file, burst_band_width, f0_source,tshift_src, &
+                         factor, t0, DT, SOURCE_IS_MOVING, &
+                         time_stepping_scheme, stage_time_scheme, islice_selected_source, &
+                         USE_TRICK_FOR_BETTER_PRESSURE, myrank, initialfield
   implicit none
 
   real(kind=CUSTOM_REAL), dimension(nglob_acoustic),intent(inout) :: potential_dot_dot_acoustic
   integer,intent(in) :: it,i_stage
-
+  double precision,external :: get_stf_acoustic
   !local variables
   integer :: i_source,i,j,iglob,ispec
-  real(kind=CUSTOM_REAL) :: stf_used
+  !real(kind=CUSTOM_REAL) :: stf_used
+  double precision :: stf_used
+  double precision :: timeval,t_used
 
   do i_source = 1,NSOURCES
     ! if this processor core carries the source
@@ -59,8 +67,40 @@
       ! source element is acoustic
       if (ispec_is_acoustic(ispec)) then
 
+        ! compute current time
+        select case(time_stepping_scheme)
+        case (1)
+          ! Newmark
+          timeval = dble(it-1)*DT
+        case (2)
+          ! LDDRK: Low-Dissipation and low-dispersion Runge-Kutta
+          ! note: the LDDRK scheme updates displacement after the stiffness computations and
+          !       after adding boundary/coupling/source terms.
+          !       thus, at each time loop step it, displ(:) is still at (n) and not (n+1) like for the Newmark scheme.
+          !       we therefore at an additional -DT to have the corresponding timing for the source.
+          timeval = dble(it-1-1)*DT + dble(C_LDDRK(i_stage))*DT
+        case (3)
+          ! RK: Runge-Kutta
+          ! note: similar like LDDRK above, displ(n+1) will be determined after stiffness/source/.. computations.
+          !       thus, adding an additional -DT to have the same timing in seismogram as Newmark
+          timeval = dble(it-1-1)*DT + dble(C_RK4(i_stage))*DT
+        case (4)
+          ! symplectic PEFRL
+          ! note: similar like LDDRK above, displ(n+1) will be determined after final stage of stiffness/source/.. computations.
+          !       thus, adding an additional -DT to have the same timing in seismogram as Newmark
+          !
+          !       for symplectic schemes, the current stage time step size is the sum of all previous and current coefficients
+          !          sum( ALPHA_SYMPLECTIC(1:i_stage) ) * DT
+          timeval = dble(it-1-1)*DT + dble(sum(ALPHA_SYMPLECTIC(1:i_stage))) * DT
+        case default
+          call exit_MPI(myrank,'Error invalid time stepping scheme chosen, please check...')
+        end select
+
+        t_used = timeval - t0 - tshift_src(i_source)
+
         ! source time function
-        stf_used = source_time_function(i_source,it,i_stage)
+        !stf_used = source_time_function(i_source,it,i_stage)
+        stf_used = get_stf_acoustic(t_used,i_source)
 
         ! collocated force
         ! beware, for an acoustic medium, the source is pressure divided by Kappa of the fluid
@@ -289,3 +329,315 @@
 
   end subroutine compute_add_sources_acoustic_adjoint
 
+!========================================================================
+
+  double precision function get_stf_acoustic(t_used,i_source)
+
+  ! prepares source_time_function array
+
+  use constants, only: IMAIN,ZERO,ONE,TWO,HALF,PI,QUARTER,OUTPUT_FILES, &
+                       SOURCE_DECAY_MIMIC_TRIANGLE, &
+                       C_LDDRK,C_RK4,ALPHA_SYMPLECTIC
+
+  use specfem_par, only: NSTEP, NSOURCES, source_time_function, &
+                         time_function_type, name_of_source_file, burst_band_width, f0_source,tshift_src, &
+                         factor, t0, DT, SOURCE_IS_MOVING, &
+                         time_stepping_scheme, stage_time_scheme, islice_selected_source, &
+                         USE_TRICK_FOR_BETTER_PRESSURE, myrank, initialfield
+
+  implicit none
+
+  ! local parameters
+  double precision :: stf_used, timeval, DecT, Tc, omegat, omega_coa,dummy_t,coeff, t_used, Nc
+  double precision :: hdur,hdur_gauss
+
+  integer :: it,i_source,ier,num_file
+  integer :: i_stage
+
+  character(len=150) :: error_msg1 = 'Error opening the file that contains the external source: '
+  character(len=250) :: error_msg
+  logical :: trick_ok
+
+  ! external functions
+  double precision, external :: comp_source_time_function_heaviside_hdur
+  double precision, external :: comp_source_time_function_Gaussian,comp_source_time_function_dGaussian, &
+    comp_source_time_function_d2Gaussian,comp_source_time_function_d3Gaussian,marmousi_ormsby_wavelet,cos_taper
+  double precision, external :: comp_source_time_function_Ricker,comp_source_time_function_d2Ricker
+
+  double precision :: stf
+  
+  ! determines source_time_function value for different source types
+  select case (time_function_type(i_source))
+  case (1)
+    ! Ricker: second derivative of a Gaussian
+    if (USE_TRICK_FOR_BETTER_PRESSURE) then
+      ! use a trick to increase accuracy of pressure seismograms in fluid (acoustic) elements:
+      ! use the second derivative of the source for the source time function instead of the source itself,
+      ! and then record -potential_acoustic() as pressure seismograms instead of -potential_dot_dot_acoustic();
+      ! this is mathematically equivalent, but numerically significantly more accurate because in the explicit
+      ! Newmark time scheme acceleration is accurate at zeroth order while displacement is accurate at second order,
+      ! thus in fluid elements potential_dot_dot_acoustic() is accurate at zeroth order while potential_acoustic()
+      ! is accurate at second order and thus contains significantly less numerical noise.
+      ! Second derivative of Ricker source time function :
+      stf =  - factor(i_source) * &
+               comp_source_time_function_d2Ricker(t_used,f0_source(i_source))
+    else
+      ! Ricker (second derivative of a Gaussian) source time function
+      stf = - factor(i_source) * &
+              comp_source_time_function_Ricker(t_used,f0_source(i_source))
+    endif
+
+  case (2)
+    ! first derivative of a Gaussian
+
+    if (USE_TRICK_FOR_BETTER_PRESSURE) then
+      ! use a trick to increase accuracy of pressure seismograms in fluid (acoustic) elements:
+      ! use the second derivative of the source for the source time function instead of the source itself,
+      ! and then record -potential_acoustic() as pressure seismograms instead of -potential_dot_dot_acoustic();
+      ! this is mathematically equivalent, but numerically significantly more accurate because in the explicit
+      ! Newmark time scheme acceleration is accurate at zeroth order while displacement is accurate at second order,
+      ! thus in fluid elements potential_dot_dot_acoustic() is accurate at zeroth order while potential_acoustic()
+      ! is accurate at second order and thus contains significantly less numerical noise.
+      ! Third derivative of Gaussian source time function :
+      stf = - factor(i_source) * &
+                comp_source_time_function_d3Gaussian(t_used,f0_source(i_source))
+    else
+      ! First derivative of a Gaussian source time function
+      stf = - factor(i_source) * &
+                comp_source_time_function_dGaussian(t_used,f0_source(i_source))
+    endif
+
+  case (3,4)
+    ! Gaussian/Dirac type
+
+    if (USE_TRICK_FOR_BETTER_PRESSURE) then
+      ! use a trick to increase accuracy of pressure seismograms in fluid (acoustic) elements:
+      ! use the second derivative of the source for the source time function instead of the source itself,
+      ! and then record -potential_acoustic() as pressure seismograms instead of -potential_dot_dot_acoustic();
+      ! this is mathematically equivalent, but numerically significantly more accurate because in the explicit
+      ! Newmark time scheme acceleration is accurate at zeroth order while displacement is accurate at second order,
+      ! thus in fluid elements potential_dot_dot_acoustic() is accurate at zeroth order while potential_acoustic()
+      ! is accurate at second order and thus contains significantly less numerical noise.
+      ! Second derivative of Gaussian :
+      stf = - factor(i_source) * &
+                 comp_source_time_function_d2Gaussian(t_used,f0_source(i_source))
+    else
+      ! Gaussian or Dirac (we use a very thin Gaussian instead) source time function
+      stf = - factor(i_source) * &
+                  comp_source_time_function_Gaussian(t_used,f0_source(i_source))
+    endif
+
+  case (5)
+    ! Heaviside source time function (we use a very thin error function instead)
+    hdur = 1.d0 / f0_source(i_source)
+    hdur_gauss = hdur * 5.d0 / 3.d0
+
+    ! convert the half duration for triangle STF to the one for Gaussian STF
+    hdur_gauss = hdur_gauss / SOURCE_DECAY_MIMIC_TRIANGLE
+
+    ! quasi-Heaviside
+    stf = - factor(i_source) * &
+                            comp_source_time_function_heaviside_hdur(t_used,hdur_gauss)
+
+  case (6)
+    ! ocean acoustics type I
+    DecT = t0 + tshift_src(i_source)
+    Tc = 4.d0 / f0_source(i_source) + DecT
+    omega_coa = TWO * PI * f0_source(i_source)
+
+    if (timeval > DecT .and. timeval < Tc) then
+      ! source time function from Computational Ocean Acoustics
+      omegat =  omega_coa * ( timeval - DecT )
+      stf = factor(i_source) * HALF * &
+            sin( omegat ) * ( ONE - cos( QUARTER * omegat ) )
+      !stf = factor(i_source) * HALF / omega_coa / omega_coa * &
+      !      ( sin(omegat) - 8.d0 / 9.d0 * sin(3.d0/ 4.d0 * omegat) - 8.d0 / 25.d0 * sin(5.d0 / 4.d0 * omegat) )
+    else
+      stf = ZERO
+    endif
+
+  case (7)
+    ! ocean acoustics type II
+    DecT = t0 + tshift_src(i_source)
+    Tc = 4.d0 / f0_source(i_source) + DecT
+    omega_coa = TWO*PI*f0_source(i_source)
+    if (USE_TRICK_FOR_BETTER_PRESSURE) then
+      ! use a trick to increase accuracy of pressure seismograms in fluid (acoustic) elements:
+      ! use the second derivative of the source for the source time function instead of the source itself,
+      ! and then record -potential_acoustic() as pressure seismograms instead of -potential_dot_dot_acoustic();
+      ! this is mathematically equivalent, but numerically significantly more accurate because in the explicit
+      ! Newmark time scheme acceleration is accurate at zeroth order while displacement is accurate at second order,
+      ! thus in fluid elements potential_dot_dot_acoustic() is accurate at zeroth order while potential_acoustic()
+      ! is accurate at second order and thus contains significantly less numerical noise.
+      ! Second derivative of source 7 :
+      if (timeval > DecT .and. timeval < Tc) then ! t_used > 0 t_used < Nc/f0_source(i_source)) then
+        stf = factor(i_source) * &
+                  0.5d0*(ONE-cos(omega_coa*t_used/4.0d0))*sin(omega_coa*t_used)
+      else
+        stf = ZERO
+      endif
+    else
+      !Tc = 1.d0 / f0_source(i_source) + DecT ! For source 1 OASES
+      !if (timeval > DecT .and. timeval < Tc) then ! t_used > 0 t_used < Nc/f0_source(i_source)) then
+      !  stf = factor(i_source) * ( &  ! Source 1 OASES
+      !            0.75d0 - cos(omega_coa*t_used) + 0.25d0*cos(TWO*omega_coa*t_used))
+      !else
+      !  stf = ZERO
+      !endif
+      if (timeval > DecT .and. timeval < Tc) then
+        ! source time function from Computational Ocean Acoustics
+        omegat =  omega_coa * ( timeval - DecT )
+        !stf = factor(i_source) * HALF / omega_coa / omega_coa * &
+        !      ( sin(omegat) - 8.d0 / 9.d0 * sin(3.d0/ 4.d0 * omegat) - &
+        !     8.d0 / 25.d0 * sin(5.d0 / 4.d0 * omegat) -1./15.*( timeval - DecT ) + 1./15.*4./f0_source(i_source))
+        stf = factor(i_source) * HALF / omega_coa / omega_coa * &
+               ( - sin(omegat) + 8.d0 / 9.d0 * sin(3.d0 / 4.d0 * omegat) + &
+                8.d0 / 25.d0 * sin(5.d0 / 4.d0 * omegat) - 1.d0 / 15.d0 * omegat )
+      else if (timeval > DecT) then
+        stf = &
+               - factor(i_source) * HALF / omega_coa / 15.d0 * (4.d0 / f0_source(i_source))
+      else
+        stf = ZERO
+      endif
+!      if (timeval > DecT .and. timeval < Tc) then
+!        ! source time function from Computational Ocean Acoustics
+!        omegat =  omega_coa * ( timeval - DecT )
+!        !stf = factor(i_source) * HALF / omega_coa / omega_coa * &
+!        !      ( sin(omegat) - 8.d0 / 9.d0 * sin(3.d0/ 4.d0 * omegat) - &
+!        !     8.d0 / 25.d0 * sin(5.d0 / 4.d0 * omegat) -1./15.*( timeval - DecT ) + 1./15.*4./f0_source(i_source))
+!        stf = factor(i_source) * HALF / omega_coa / omega_coa * &
+!               ( - sin(omegat) + 8.d0 / 9.d0 * sin(3.d0 / 4.d0 * omegat) + &
+!                8.d0 / 25.d0 * sin(5.d0 / 4.d0 * omegat) - 1.d0 / 15.d0 * omegat )
+!      else if (timeval > DecT) then
+!        stf = &
+!               - factor(i_source) * HALF / omega_coa / 15.d0 * (4.d0 / f0_source(i_source))
+!      else
+!        stf = ZERO
+!      endif
+    endif
+
+  case (8)
+    ! external type
+    ! opens external file to read in source time function
+    if (it == 1) then
+      ! reads in from external source time function file
+      open(unit=num_file,file=trim(name_of_source_file(i_source)),status='old',action='read',iostat=ier)
+      if (ier /= 0) then
+        print *,'Error opening source time function file: ',trim(name_of_source_file(i_source))
+        error_msg = trim(error_msg1)//trim(name_of_source_file(i_source))
+        call exit_MPI(myrank,error_msg)
+      endif
+    endif
+
+    ! reads in 2-column file values (time value in first column will be ignored)
+    ! format: #time #stf-value
+    read(num_file,*,iostat=ier) dummy_t, stf
+    if (ier /= 0) then
+      print *,'Error reading source time function file: ',trim(name_of_source_file(i_source)),' at line ',it
+      print *,'Please make sure the file contains the same number of lines as the number of timesteps NSTEP ',NSTEP
+      call exit_MPI(myrank,'Error reading source time function file')
+    endif
+
+    ! closes external file
+    if (it == NSTEP) close(num_file)
+
+    ! amplifies STF by factor
+    ! note: the amplification factor will amplify the external source time function.
+    !       in case this is not desired, one just needs to set the amplification factor to 1 in DATA/SOURCE:
+    !         factor  = 1.0
+    coeff = factor(i_source)
+    stf = stf * coeff
+
+  case (9)
+    ! burst type
+    DecT = t0 + tshift_src(i_source)
+    t_used = (timeval-t0-tshift_src(i_source))
+    Nc = TWO * f0_source(i_source) / burst_band_width(i_source)
+    Tc = Nc / f0_source(i_source) + DecT
+    omega_coa = TWO*PI*f0_source(i_source)
+
+    if (USE_TRICK_FOR_BETTER_PRESSURE) then
+      ! use a trick to increase accuracy of pressure seismograms in fluid (acoustic) elements:
+      ! use the second derivative of the source for the source time function instead of the source itself,
+      ! and then record -potential_acoustic() as pressure seismograms instead of -potential_dot_dot_acoustic();
+      ! this is mathematically equivalent, but numerically significantly more accurate because in the explicit
+      ! Newmark time scheme acceleration is accurate at zeroth order while displacement is accurate at second order,
+      ! thus in fluid elements potential_dot_dot_acoustic() is accurate at zeroth order while potential_acoustic()
+      ! is accurate at second order and thus contains significantly less numerical noise.
+      ! Second derivative of Burst :
+      if (timeval > DecT .and. timeval < Tc) then ! t_used > 0 t_used < Nc/f0_source(i_source)) then
+        stf = - factor(i_source) * (0.5d0 * (omega_coa)**2 * &
+                  sin(omega_coa*t_used) * cos(omega_coa*t_used/Nc) / Nc**2 - &
+                  0.5d0 * (omega_coa)**2 * sin(omega_coa*t_used) * &
+                  (ONE-cos(omega_coa*t_used/Nc)) + &
+                  (omega_coa)**2 * cos(omega_coa*t_used) * &
+                  sin(omega_coa*t_used/Nc) / Nc)
+      !else if (timeval > DecT) then
+      !  stf = ZERO
+      else
+        stf = ZERO
+      endif
+      ! Integral of burst
+      !if (timeval > DecT .and. timeval < Tc) then ! t_used > 0 t_used < Nc/f0_source(i_source)) then
+      !  stf = - factor(i_source) * ( &
+      !  Nc*( (Nc+1.0d0)*cos((omega_coa*(Nc-1.0d0)*t_used)/Nc) + &
+      !       (Nc-1.0d0)*cos((omega_coa*(Nc+1.0d0)*t_used)/Nc)) - &
+      !  TWO*(Nc**2-1.0d0)*cos(omega_coa*t_used) &
+      !  ) / (8.0d0*PI*f0_source(i_source)*(Nc-1)*(Nc+1))
+      !else
+      !  stf = ZERO
+      !endif
+      ! Double integral of burst
+      !if (timeval > DecT .and. timeval < Tc) then ! t_used > 0 t_used < Nc/f0_source(i_source)) then
+      !  stf = - factor(i_source) * ( &
+      !      -sin(TWO*f0_source(i_source)*Pi*t_used)/(8.0d0*f0_source(i_source)**TWO*Pi**2) + &
+      !      (Nc**2*sin((TWO*f0_source(i_source)*(Nc-1)*PI*t_used)/Nc))/(16.0d0*f0_source(i_source)**2*(Nc-1)**2*Pi**2) + &
+      !      (Nc**2*sin((TWO*f0_source(i_source)*(Nc+1)*PI*t_used)/Nc))/(16.0d0*f0_source(i_source)**2*(Nc+1)**2*Pi**2) )
+      !else
+      !  stf = ZERO
+      !endif
+    else
+      if (timeval > DecT .and. timeval < Tc) then ! t_used > 0 t_used < Nc/f0_source(i_source)) then
+        stf = - factor(i_source) * &
+                  0.5d0*(ONE-cos(omega_coa*t_used/Nc))*sin(omega_coa*t_used)
+      !else if (timeval > DecT) then
+      !  stf = ZERO
+      else
+        stf = ZERO
+      endif
+    endif
+
+  case (10)
+    ! Sinus source time function
+    omega_coa = TWO*PI*f0_source(i_source)
+    if (USE_TRICK_FOR_BETTER_PRESSURE) then
+      ! use a trick to increase accuracy of pressure seismograms in fluid (acoustic) elements:
+      ! use the second derivative of the source for the source time function instead of the source itself,
+      ! and then record -potential_acoustic() as pressure seismograms instead of -potential_dot_dot_acoustic();
+      ! this is mathematically equivalent, but numerically significantly more accurate because in the explicit
+      ! Newmark time scheme acceleration is accurate at zeroth order while displacement is accurate at second order,
+      ! thus in fluid elements potential_dot_dot_acoustic() is accurate at zeroth order while potential_acoustic()
+      ! is accurate at second order and thus contains significantly less numerical noise.
+      ! Third derivative of Gaussian source time function :
+      stf = -TWO*PI*omega_coa*f0_source(i_source)* &
+                                                  factor(i_source) * sin(omega_coa*t_used)
+    else
+      ! First derivative of a Gaussian source time function
+      stf = factor(i_source) * sin(omega_coa*t_used)
+    endif
+
+  case (11)
+      ! Marmousi_ormsby_wavelet
+      hdur = 1.0 / 35.0
+      stf = factor(i_source) * &
+                cos_taper(t_used,hdur) * marmousi_ormsby_wavelet(PI*t_used)
+
+  case default
+    call exit_MPI(myrank,'unknown source time function')
+
+  end select
+
+  ! return value
+  get_stf_acoustic = stf
+
+  end function get_stf_acoustic
