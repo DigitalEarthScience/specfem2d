@@ -329,7 +329,9 @@
 
   end subroutine compute_add_sources_acoustic_adjoint
 
+!
 !========================================================================
+!
 
   double precision function get_stf_acoustic(t_used,i_source)
 

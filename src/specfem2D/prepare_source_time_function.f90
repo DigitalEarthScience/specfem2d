@@ -115,7 +115,8 @@
     ! we're all done
     return
   else
-    allocate(source_time_function(NSOURCES,NSTEP,stage_time_scheme),stat=ier)
+    !allocate(source_time_function(NSOURCES,NSTEP,stage_time_scheme),stat=ier)
+    allocate(source_time_function(1,NSTEP,stage_time_scheme),stat=ier)
     if (ier /= 0) call exit_MPI(myrank,'Error allocating array source_time_function')
   endif
 
@@ -135,7 +136,8 @@
   endif
 
   ! loop on all the sources
-  do i_source = 1,NSOURCES
+  ! Only plot first source time function
+  do i_source = 1,1!NSOURCES
 
     ! The following lines could be needed to set absolute amplitudes.
     !
