@@ -135,6 +135,7 @@
 ! This subroutine is the same than the previous one but with a moving source
 
   use constants, only: CUSTOM_REAL,NDIM,NGLLX,NGLLZ,NGLJ,TINYVAL,IMAIN
+  use constants, only: C_LDDRK,C_RK4,ALPHA_SYMPLECTIC
 
   use specfem_par, only: ispec_is_acoustic,nglob_acoustic, &
                          NSOURCES,source_type,source_time_function, &
@@ -152,11 +153,13 @@
 
   real(kind=CUSTOM_REAL), dimension(nglob_acoustic),intent(inout) :: potential_dot_dot_acoustic
   integer,intent(in) :: it,i_stage
+  double precision,external :: get_stf_acoustic
 
   !local variables
   integer :: i_source,i,j,iglob,ispec
   double precision :: hlagrange
   double precision :: xsrc,zsrc,timeval,t_used
+  double precision :: stf_used
   real(kind=CUSTOM_REAL), dimension(NDIM,NGLLX,NGLLZ) :: sourcearray
 
   ! checks if anything to do
@@ -250,6 +253,40 @@
       ispec = ispec_selected_source(i_source)
 
       if (ispec_is_acoustic(ispec)) then
+        ! compute current time
+        select case(time_stepping_scheme)
+        case (1)
+          ! Newmark
+          timeval = dble(it-1)*DT
+        case (2)
+          ! LDDRK: Low-Dissipation and low-dispersion Runge-Kutta
+          ! note: the LDDRK scheme updates displacement after the stiffness computations and
+          !       after adding boundary/coupling/source terms.
+          !       thus, at each time loop step it, displ(:) is still at (n) and not (n+1) like for the Newmark scheme.
+          !       we therefore at an additional -DT to have the corresponding timing for the source.
+          timeval = dble(it-1-1)*DT + dble(C_LDDRK(i_stage))*DT
+        case (3)
+          ! RK: Runge-Kutta
+          ! note: similar like LDDRK above, displ(n+1) will be determined after stiffness/source/.. computations.
+          !       thus, adding an additional -DT to have the same timing in seismogram as Newmark
+          timeval = dble(it-1-1)*DT + dble(C_RK4(i_stage))*DT
+        case (4)
+          ! symplectic PEFRL
+          ! note: similar like LDDRK above, displ(n+1) will be determined after final stage of stiffness/source/.. computations.
+          !       thus, adding an additional -DT to have the same timing in seismogram as Newmark
+          !
+          !       for symplectic schemes, the current stage time step size is the sum of all previous and current coefficients
+          !          sum( ALPHA_SYMPLECTIC(1:i_stage) ) * DT
+          timeval = dble(it-1-1)*DT + dble(sum(ALPHA_SYMPLECTIC(1:i_stage))) * DT
+        case default
+          call exit_MPI(myrank,'Error invalid time stepping scheme chosen, please check...')
+        end select
+
+        t_used = timeval - t0 - tshift_src(i_source)
+
+        ! source time function
+        !stf_used = source_time_function(i_source,it,i_stage)
+        stf_used = get_stf_acoustic(t_used,i_source)
         ! collocated force
         ! beware, for acoustic medium, source is: pressure divided by Kappa of the fluid
         ! the sign is negative because pressure p = - Chi_dot_dot therefore we need
@@ -263,8 +300,11 @@
               hlagrange = hxis_store(i_source,i) * hgammas_store(i_source,j)
               sourcearray(1,i,j) = hlagrange
 
+              !potential_dot_dot_acoustic(iglob) = potential_dot_dot_acoustic(iglob) + &
+              !        real(source_time_function(i_source,it,i_stage)*sourcearray(1,i,j) / &
+              !        kappastore(i,j,ispec),kind=CUSTOM_REAL)
               potential_dot_dot_acoustic(iglob) = potential_dot_dot_acoustic(iglob) + &
-                      real(source_time_function(i_source,it,i_stage)*sourcearray(1,i,j) / &
+                      real(stf_used*sourcearray(1,i,j) / &
                       kappastore(i,j,ispec),kind=CUSTOM_REAL)
             enddo
           enddo
