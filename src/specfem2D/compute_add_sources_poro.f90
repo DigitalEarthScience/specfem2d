@@ -39,14 +39,13 @@
   use constants, only: C_LDDRK,C_RK4,ALPHA_SYMPLECTIC
 
   use specfem_par, only: ispec_is_poroelastic,nglob_poroelastic, &
-                         NSOURCES,source_time_function,sourcearrays, &
+                         NSOURCES,sourcearrays, &
                          islice_selected_source,ispec_selected_source, &
                          ibool,phistore,tortstore,rhoarraystore
-  use specfem_par, only: NSTEP,  &
-                         time_function_type, name_of_source_file, burst_band_width, f0_source,tshift_src, &
-                         factor, t0, DT, SOURCE_IS_MOVING, &
-                         time_stepping_scheme, stage_time_scheme, islice_selected_source, &
-                         USE_TRICK_FOR_BETTER_PRESSURE, myrank, initialfield
+  use specfem_par, only: tshift_src, &
+                         t0, DT, &
+                         time_stepping_scheme,islice_selected_source, &
+                         myrank
   implicit none
 
   real(kind=CUSTOM_REAL), dimension(NDIM,nglob_poroelastic) :: accels_poroelastic,accelw_poroelastic
@@ -221,28 +220,24 @@
 
   ! prepares source_time_function array
 
-  use constants, only: IMAIN,ZERO,ONE,TWO,HALF,PI,QUARTER,OUTPUT_FILES, &
+  use constants, only: IMAIN,ZERO,ONE,TWO,HALF,PI,QUARTER, &
                        SOURCE_DECAY_MIMIC_TRIANGLE, &
                        C_LDDRK,C_RK4,ALPHA_SYMPLECTIC
 
-  use specfem_par, only: NSTEP, NSOURCES, source_time_function, &
-                         time_function_type, name_of_source_file, burst_band_width, f0_source,tshift_src, &
-                         factor, t0, DT, SOURCE_IS_MOVING, &
-                         time_stepping_scheme, stage_time_scheme, islice_selected_source, &
-                         myrank, initialfield
+  use specfem_par, only:  NSTEP,time_function_type,name_of_source_file,       &
+                          burst_band_width,f0_source,tshift_src,factor,t0,    &
+                         myrank
 
   implicit none
 
   ! local parameters
-  double precision :: stf_used, timeval, DecT, Tc, omegat, omega_coa,dummy_t,coeff, t_used, Nc
+  double precision :: timeval, DecT, Tc, omegat, omega_coa,dummy_t,coeff, t_used, Nc
   double precision :: hdur,hdur_gauss
 
   integer :: it,i_source,ier,num_file
-  integer :: i_stage
 
   character(len=150) :: error_msg1 = 'Error opening the file that contains the external source: '
   character(len=250) :: error_msg
-  logical :: trick_ok
 
   ! external functions
   double precision, external :: comp_source_time_function_heaviside_hdur
