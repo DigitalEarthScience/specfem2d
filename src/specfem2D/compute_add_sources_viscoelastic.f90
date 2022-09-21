@@ -138,6 +138,7 @@
   subroutine compute_add_sources_viscoelastic_moving_sources(accel_elastic,it,i_stage)
 
   use constants, only: CUSTOM_REAL,NGLLX,NGLLZ,NDIM,TINYVAL,NGLJ,IMAIN
+  use constants, only: C_LDDRK,C_RK4,ALPHA_SYMPLECTIC
 
   use specfem_par, only: P_SV,ispec_is_elastic,nglob_elastic, &
                          NSOURCES,source_time_function, &
@@ -155,6 +156,7 @@
 
   real(kind=CUSTOM_REAL), dimension(NDIM,nglob_elastic) :: accel_elastic
   integer :: it, i_stage
+  double precision,external :: get_stf_viscoelastic
 
   !local variable
   integer :: i_source,i,j,iglob,ispec
@@ -341,8 +343,40 @@
       ! source element is elastic
       if (ispec_is_elastic(ispec)) then
 
+        ! compute current time
+        select case(time_stepping_scheme)
+        case (1)
+          ! Newmark
+          timeval = dble(it-1)*DT
+        case (2)
+          ! LDDRK: Low-Dissipation and low-dispersion Runge-Kutta
+          ! note: the LDDRK scheme updates displacement after the stiffness computations and
+          !       after adding boundary/coupling/source terms.
+          !       thus, at each time loop step it, displ(:) is still at (n) and not (n+1) like for the Newmark scheme.
+          !       we therefore at an additional -DT to have the corresponding timing for the source.
+          timeval = dble(it-1-1)*DT + dble(C_LDDRK(i_stage))*DT
+        case (3)
+          ! RK: Runge-Kutta
+          ! note: similar like LDDRK above, displ(n+1) will be determined after stiffness/source/.. computations.
+          !       thus, adding an additional -DT to have the same timing in seismogram as Newmark
+          timeval = dble(it-1-1)*DT + dble(C_RK4(i_stage))*DT
+        case (4)
+          ! symplectic PEFRL
+          ! note: similar like LDDRK above, displ(n+1) will be determined after final stage of stiffness/source/.. computations.
+          !       thus, adding an additional -DT to have the same timing in seismogram as Newmark
+          !
+          !       for symplectic schemes, the current stage time step size is the sum of all previous and current coefficients
+          !          sum( ALPHA_SYMPLECTIC(1:i_stage) ) * DT
+          timeval = dble(it-1-1)*DT + dble(sum(ALPHA_SYMPLECTIC(1:i_stage))) * DT
+        case default
+          call exit_MPI(myrank,'Error invalid time stepping scheme chosen, please check...')
+        end select
+
+        t_used = timeval - t0 - tshift_src(i_source)
+
         ! source time function
-        stf_used = source_time_function(i_source,it,i_stage)
+        !stf_used = source_time_function(i_source,it,i_stage)
+        stf_used = get_stf_viscoelastic(t_used,i_source)
 
         ! adds source term
         ! note: we use sourcearrays for both collocated forces and moment tensors
